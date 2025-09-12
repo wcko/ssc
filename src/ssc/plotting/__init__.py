@@ -2,6 +2,6 @@
 Plotting functions for single-cell data visualization.
 """
 
-from .violin import violin_plot_final as vlnplot
+from .violin import vlnplot
 
 __all__ = ['vlnplot']

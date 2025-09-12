@@ -66,7 +66,7 @@ def _get_colors_from_dict(color_dict, categories, default_palette, color_type):
     return [color_dict[cat] for cat in categories]
 
 
-def violin_plot_final(adata, gene, group_by, 
+def vlnplot(adata, gene, group_by, 
                     title=None, 
                     layer=None,
                     split_by=None,
