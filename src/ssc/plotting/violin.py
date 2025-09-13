@@ -99,7 +99,8 @@ def vlnplot(adata, gene, group_by,
                     facet_figsize=None,
                     mean_color='black',
                     free_y=True,
-                    free_mean_y=False):
+                    free_mean_y=False,
+                    ylim=None):
     """
     Create violin plots for single-cell RNA sequencing data with comprehensive customization options.
     
@@ -177,6 +178,9 @@ def vlnplot(adata, gene, group_by,
         If True, allow independent gene expression y-axis scaling for each subplot
     free_mean_y : bool, default False
         If True, allow independent mean expression y-axis scaling for each subplot
+    ylim : tuple, optional
+        Y-axis limits for gene expression (left axis) as (min, max). 
+        Overrides free_y behavior when specified. Mean expression axis unaffected.
     
     Returns
     -------
@@ -196,6 +200,10 @@ def vlnplot(adata, gene, group_by,
     >>> fig = ssc.vlnplot(adata, 'GNLY', 'condition', 
     ...                   facet_by='subject', facet_col='cell_type',
     ...                   group_order=['Nonlesional', 'SADBE', 'Metal'])
+    
+    >>> # Focus on expression range with ylim
+    >>> fig = ssc.vlnplot(adata, 'IL13', 'cell_type',
+    ...                   ylim=(0, 10))  # Crop outliers for better violin detail
     """
 
     # Extract and validate data
@@ -601,6 +609,11 @@ def vlnplot(adata, gene, group_by,
         ax1.tick_params(axis='x', labelsize=axis_tick_fontsize)
         ax1.spines['top'].set_visible(False)
         ax2.spines['top'].set_visible(False)
+
+    # Apply ylim to all subplots if specified (overrides free_y behavior)
+    if ylim is not None:
+        for idx, (ax1, ax2, row, col) in enumerate(ax_pairs):
+            ax1.set_ylim(ylim)  # Only affects left axis (violin data)
 
     # Proper free_mean_y implementation
     if plot_mean:
