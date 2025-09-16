@@ -51,6 +51,16 @@ def main():
                       jitter_dot_size=8)
     fig.savefig('example_publication.png', dpi=300, bbox_inches='tight')
     print("   Saved: example_publication.png")
+
+    # Grid layout for facets instead of horizontal layout
+    fig = ssc.vlnplot(adata, 'IL4', 'condition',
+                      facet_by='subject', facet_ncols=2,
+                      facet_figsize=(12, 10))  # 2×2 subject grid
+
+    # Complex faceting with grid control
+    fig = ssc.vlnplot(adata, 'IL13', 'condition',
+                      facet_by='subject', facet_col='tissue',
+                      acet_ncols=2, facet_figsize=(12, 16))  # 2×2 per tissue, stacked
     
     print("\n✅ All examples completed!")
 

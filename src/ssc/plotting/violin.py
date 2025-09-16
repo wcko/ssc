@@ -4,6 +4,7 @@ Violin plot functions for single-cell RNA sequencing data visualization.
 
 import pandas as pd
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.colors as mcolors
@@ -65,10 +66,43 @@ def _get_colors_from_dict(color_dict, categories, default_palette, color_type):
     # All good - return colors in category order
     return [color_dict[cat] for cat in categories]
 
+def _detect_scvi_data(adata, expression_data, layer_name=None):
+    """Detect if data appears to be scVI-normalized"""
+    zero_fraction = (expression_data == 0).mean()
+    has_scvi_metadata = any('scvi' in key.lower() for key in adata.uns.keys())
+    small_positive_fraction = ((expression_data > 0) & (expression_data < 0.1)).mean()
+
+    likely_scvi = (
+        zero_fraction < 0.05 and  # Very few zeros
+        small_positive_fraction > 0.2 and  # Many small positive values
+        (has_scvi_metadata or layer_name is None)
+    )
+
+    return likely_scvi, zero_fraction
+
+def _suggest_percent_expressing_layer(adata):
+    """Suggest best layer for % expressing calculation"""
+    candidate_layers = ['raw', 'uncorrected', 'counts', 'X_original']
+
+    for layer in candidate_layers:
+        if layer in adata.layers:
+            layer_data = adata.layers[layer]
+            if hasattr(layer_data, 'toarray'):
+                sample_data = layer_data[:1000].toarray().flatten()  # Sample for speed
+            else:
+                sample_data = layer_data[:1000].flatten()
+
+            zero_frac = (sample_data == 0).mean()
+            if zero_frac > 0.1:  # Reasonable sparsity
+                return layer
+
+    return None
+
 
 def vlnplot(adata, gene, group_by, 
                     title=None, 
                     layer=None,
+                    percent_expressing_layer=None,
                     split_by=None,
                     facet_by=None,
                     facet_col=None,
@@ -80,9 +114,9 @@ def vlnplot(adata, gene, group_by,
                     split_colors=None,
                     jitter_points=True,
                     jitter_dot_size=12,
-                    plot_mean=True, 
+                    plot_mean=True,
+                    show_fraction=True,
                     show_stats=True,
-                    number_labels=True,
                     show_legend=True,
                     title_fontsize=14,           # Main plot title
                     subtitle_fontsize=9,         # Individual subplot titles  
@@ -97,6 +131,7 @@ def vlnplot(adata, gene, group_by,
                     xlabel_ha='right',
                     figsize=(12, 8),
                     facet_figsize=None,
+                    facet_ncols=None,
                     mean_color='black',
                     free_y=True,
                     free_mean_y=False,
@@ -140,10 +175,10 @@ def vlnplot(adata, gene, group_by,
         Size of jitter points
     plot_mean : bool, default True
         Whether to show mean expression dots on secondary y-axis
+    show_fraction : bool, default True
+        Whether to show cell count and fraction expressing below x-axis
     show_stats : bool, default True
         Whether to show cell statistics
-    number_labels : bool, default True
-        Whether to show cell count and fraction expressing below x-axis
     show_legend : bool, default True
         Whether to show legend for split violins
     title_fontsize : int, default 14
@@ -172,6 +207,13 @@ def vlnplot(adata, gene, group_by,
         Figure size for single plots
     facet_figsize : tuple, optional
         Figure size for faceted plots. If None, calculated automatically
+    facet_ncols : int, optional
+    Number of columns for facet_by grid layout. If None, uses horizontal layout (default).
+    When specified, arranges facet_by categories in an n_cols × n_rows grid with padding
+    for incomplete grids. If facet_col is also used, each facet_col category gets its
+    own n_cols × n_rows block stacked vertically.
+    Example: 4 subjects with facet_ncols=2 creates 2×2 grid; with facet_col='tissue'
+    (2 tissues), creates 4×2 total grid (two 2×2 blocks stacked).
     mean_color : str, default 'black'
         Color for mean expression dots and axis
     free_y : bool, default True
@@ -210,6 +252,7 @@ def vlnplot(adata, gene, group_by,
     if gene not in adata.var_names:
         raise ValueError(f"Gene {gene} not found in dataset")
 
+    # Get expression data for plotting
     if layer is not None:
         if layer not in adata.layers.keys():
             raise ValueError(f"Layer '{layer}' not found. Available layers: {list(adata.layers.keys())}")
@@ -218,6 +261,31 @@ def vlnplot(adata, gene, group_by,
     else:
         expression_data = adata[:, gene].X.toarray().flatten()
         data_source = "adata.X (default)"
+
+    # Detect scVI data and handle % expressing calculation
+    is_scvi, zero_frac = _detect_scvi_data(adata, expression_data, layer)
+
+    # Handle percent expressing layer logic
+    if percent_expressing_layer is None and is_scvi:
+        suggested_layer = _suggest_percent_expressing_layer(adata)
+        if suggested_layer:
+            print(f"🔍 Detected scVI-like data ({zero_frac:.1%} zeros in expression data)")
+            print(f"💡 Using '{suggested_layer}' layer for % expressing calculation")
+            print(f"   This shows scVI means with original sparsity patterns")
+            percent_expressing_layer = suggested_layer
+        else:
+            print(f"⚠️  Detected scVI-like data but no raw layer found for % expressing")
+            percent_expressing_layer = None
+
+    # Get data for percent expressing calculation
+    if percent_expressing_layer is not None:
+        if percent_expressing_layer not in adata.layers.keys():
+            raise ValueError(f"Percent expressing layer '{percent_expressing_layer}' not found")
+        percent_data = adata[:, gene].layers[percent_expressing_layer].toarray().flatten()
+        percent_source = f"layer '{percent_expressing_layer}'"
+    else:
+        percent_data = expression_data  # Use same data
+        percent_source = data_source
 
     # Build plot data
     plot_data = pd.DataFrame({
@@ -239,8 +307,11 @@ def vlnplot(adata, gene, group_by,
     print(f"🎨 Mean color: {mean_color}")
     print(f"🔓 Free gene expression axis: {free_y}")
     print(f"🔓 Free mean expression axis: {free_mean_y}")
-    print(f"📋 Number labels: {number_labels} (font size: {number_fontsize})")
+    print(f"📋 Fraction labels: {show_fraction} (font size: {number_fontsize})")
     print(f"🏷️  X-axis labels: size {xlabel_fontsize}, rotation {xlabel_rotation}°, align {xlabel_ha}")
+    if percent_expressing_layer is not None:
+        print(f"📊 % expressing from: {percent_source}")
+        print(f"🔍 Dual-source mode: scVI means + original sparsity")
 
     if expression_data.min() < 0:
         print(f"⚠️  Warning: Found negative expression values (min: {expression_data.min():.3f})")
@@ -283,23 +354,35 @@ def vlnplot(adata, gene, group_by,
         # Faceted plot
         if facet_by is not None:
             facet_categories = _get_category_order(plot_data['facet_by'], facet_order, 'Facet')
-            n_cols = len(facet_categories)
+            n_facets = len(facet_categories)
+
+            # Calculate facet_by grid dimensions
+            if facet_ncols is not None:
+                facet_cols = min(facet_ncols, n_facets)
+                facet_rows = math.ceil(n_facets / facet_cols)
+            else:
+                facet_cols = n_facets  # Default: horizontal layout
+                facet_rows = 1
         else:
             facet_categories = [None]
-            n_cols = 1
+            facet_cols = 1
+            facet_rows = 1
+            n_facets = 1
 
         if facet_col is not None:
             facet_col_categories = _get_category_order(plot_data['facet_col'], facet_col_order, 'Facet columns')
-            n_rows = len(facet_col_categories)
+            n_rows = facet_rows * len(facet_col_categories)  # Stack grids vertically
+            n_cols = facet_cols
         else:
             facet_col_categories = [None]
-            n_rows = 1
+            n_rows = facet_rows
+            n_cols = facet_cols
 
         # Better default figure size
         if facet_figsize is not None:
             figsize = facet_figsize
         else:
-            figsize = (6 * n_cols, 5 * n_rows)  # Clean proportions
+            figsize = (4 * n_cols, 4 * n_rows)  # Adjust for new grid
 
         fig, ax_pairs = _create_faceted_plot_layout(n_rows, n_cols, figsize)
         is_faceted = True
@@ -323,7 +406,7 @@ def vlnplot(adata, gene, group_by,
     else:
         print(f"🎯 Free y-axis mode: each subplot will calculate independent limits")
 
-    # Calculate R-style scaling for means
+    # Calculate scaling for means
     if plot_mean:
         grouping_columns = ['group']
         if facet_by is not None:
@@ -340,7 +423,7 @@ def vlnplot(adata, gene, group_by,
 
         if global_max_mean > 0:
             r_scale_factor = global_max_expression / global_max_mean
-            print(f"📏 R-style scaling factor: {r_scale_factor:.3f}")
+            print(f"📏 Mean axis scaling factor: {r_scale_factor:.3f}")
         else:
             r_scale_factor = 1.0
             print(f"⚠️  No positive means found, using scale factor: 1.0")
@@ -353,10 +436,34 @@ def vlnplot(adata, gene, group_by,
     # Plot each subplot
     for idx, (ax1, ax2, row, col) in enumerate(ax_pairs):
 
-        # Determine which data subset to use
+        # Determine which data subset to use with new grid logic
         if is_faceted:
-            facet_col_cat = facet_col_categories[row] if facet_col_categories[0] is not None else None
-            facet_cat = facet_categories[col] if facet_categories[0] is not None else None
+            if facet_col is not None and facet_by is not None:
+                # Calculate which tissue and subject from grid position
+                tissue_idx = row // facet_rows
+                subject_row = row % facet_rows
+                subject_idx = subject_row * facet_cols + col
+
+                # Skip empty positions
+                if subject_idx >= n_facets:
+                    ax1.axis('off')
+                    ax2.axis('off')
+                    continue
+
+                facet_col_cat = facet_col_categories[tissue_idx]
+                facet_cat = facet_categories[subject_idx]
+            elif facet_by is not None:
+                # Single faceting with grid
+                subject_idx = row * facet_cols + col
+                if subject_idx >= n_facets:
+                    ax1.axis('off')
+                    ax2.axis('off')
+                    continue
+                facet_cat = facet_categories[subject_idx]
+                facet_col_cat = None
+            else:
+                facet_col_cat = facet_col_categories[row] if facet_col_categories[0] is not None else None
+                facet_cat = None
 
             subset_data = plot_data.copy()
             if facet_col_cat is not None:
@@ -402,7 +509,27 @@ def vlnplot(adata, gene, group_by,
                         ax1.scatter(x_jitter, group_expr,
                                 c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
 
-                    group_mean = group_expr.mean()
+
+                      # Calculate mean of expressing cells only
+                    if percent_expressing_layer is not None:
+                        # Use raw layer to identify expressing cells
+                        percent_group_indices = subset_data[subset_data['group'] == group].index
+                        percent_group_data = percent_data[percent_group_indices]
+                        expressing_mask = percent_group_data > 0
+
+                        if expressing_mask.sum() > 0:
+                            # Mean of only expressing cells (using scVI-normalized values)
+                            group_mean = group_expr[expressing_mask].mean()
+                        else:
+                            group_mean = 0  # No expressing cells
+                    else:
+                        # Fallback: traditional mean if no raw layer
+                        expressing_mask = group_expr > 0
+                        if expressing_mask.sum() > 0:
+                            group_mean = group_expr[expressing_mask].mean()
+                        else:
+                            group_mean = 0
+
                     subplot_means.append(group_mean)
 
                     if plot_mean:
@@ -413,12 +540,18 @@ def vlnplot(adata, gene, group_by,
                     subplot_means.append(0)
 
             # Cell statistics positioning - closer to x-axis
-            if number_labels:
+            if show_fraction:
                 for i, group in enumerate(groups):
                     group_data = subset_data[subset_data['group'] == group]['expression']
                     if len(group_data) > 0:
                         n_cells = len(group_data)
-                        frac_expressing = (group_data > 0).mean()
+                        if percent_expressing_layer is not None:
+                            # Use percent_data for % expressing calculation
+                            percent_group_indices = subset_data[subset_data['group'] == group].index
+                            percent_group_data = percent_data[percent_group_indices]
+                            frac_expressing = (percent_group_data > 0).mean()
+                        else:
+                            frac_expressing = (group_data > 0).mean()
 
                         # Cell count - positioned just below x-axis
                         ax1.text(i, -0.08, f'{n_cells}', ha='center', va='top',
@@ -482,11 +615,31 @@ def vlnplot(adata, gene, group_by,
                             darker_color = tuple(c * 0.7 for c in split_color[:3])
                             ax1.scatter(x_jitter, split_data,
                                     c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
-
+                            
                         if plot_mean:
+                        # Calculate mean of expressing cells for this split
+                            if percent_expressing_layer is not None:
+                                # Get the indices for this specific split group
+                                split_indices = group_data[group_data['split'] == split_cat].index
+                                percent_split_data = percent_data[split_indices]
+                                expressing_mask = percent_split_data > 0
+
+                                if expressing_mask.sum() > 0:
+                                    split_mean = split_data[expressing_mask].mean()
+                                else:
+                                    split_mean = 0
+                            else:
+                                # Fallback: use expression data itself to find expressing cells
+                                expressing_mask = split_data > 0
+                                if expressing_mask.sum() > 0:
+                                    split_mean = split_data[expressing_mask].mean()
+                                else:
+                                    split_mean = 0
+
                             mean_positions.append(x_pos)
-                            mean_values.append(split_data.mean())
-                            subplot_means.append(split_data.mean())
+                            mean_values.append(split_mean)
+                            subplot_means.append(split_mean)
+
                     else:
                         _draw_empty_split_placeholder(ax1, x_pos, split_width * 0.8, split_colors_palette[j])
 
@@ -499,7 +652,7 @@ def vlnplot(adata, gene, group_by,
                             edgecolors='white', linewidth=1, zorder=10)
 
             # Cell statistics for split violins - positioned closer to x-axis
-            if number_labels:
+            if show_fraction:
                 for i, group in enumerate(groups):
                     group_data = subset_data[subset_data['group'] == group]
 
@@ -509,7 +662,13 @@ def vlnplot(adata, gene, group_by,
 
                         if len(split_data) > 0:
                             n_cells = len(split_data)
-                            frac_expressing = (split_data > 0).mean()
+                            if percent_expressing_layer is not None:
+                                # Use percent_data for % expressing calculation  
+                                percent_split_indices = group_data[group_data['split'] == split_cat].index
+                                percent_split_data = percent_data[percent_split_indices]
+                                frac_expressing = (percent_split_data > 0).mean()
+                            else:
+                                frac_expressing = (split_data > 0).mean()
 
                             # Cell count - positioned just below x-axis
                             ax1.text(x_pos, -0.08, f'{n_cells}', ha='center', va='top',
@@ -618,7 +777,7 @@ def vlnplot(adata, gene, group_by,
     # Proper free_mean_y implementation
     if plot_mean:
         if free_mean_y:
-            # Independent R-style scaling for each subplot's mean axis
+            # Independent scaling for each subplot's mean axis
             print(f"🎯 Free mean y-axis mode: independent scaling per subplot")
             for idx, (_, ax2, _, _) in enumerate(ax_pairs):
                 subplot_expressions_local = subplot_y_data[idx]
@@ -636,12 +795,12 @@ def vlnplot(adata, gene, group_by,
                 else:
                     ax2.set_ylim(0, 1)
         else:
-            # Global R-style scaling for all mean axes
+            # Global scaling for all mean axes
             if r_scale_factor > 0:
                 mean_axis_max = global_max_expression / r_scale_factor * 1.1
                 for _, ax2, _, _ in ax_pairs:
                     ax2.set_ylim(0, mean_axis_max)
-                print(f"🎯 Global mean expression axis max: {mean_axis_max:.3f} (R-style scaling)")
+                print(f"🎯 Global mean expression axis max: {mean_axis_max:.3f} (scaling)")
             else:
                 for _, ax2, _, _ in ax_pairs:
                     ax2.set_ylim(0, 1)
@@ -665,7 +824,7 @@ def vlnplot(adata, gene, group_by,
     fig.suptitle(main_title, fontsize=title_fontsize, y=0.98)
 
     # Layout adjustment
-    if number_labels:
+    if show_fraction:
         plt.subplots_adjust(left=0.15, bottom=0.35, top=0.92, right=0.95, hspace=0.3)
     else:
         plt.subplots_adjust(left=0.15, bottom=0.2, top=0.92, right=0.95, hspace=0.3)
