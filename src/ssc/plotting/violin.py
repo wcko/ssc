@@ -281,17 +281,26 @@ def vlnplot(adata, gene, group_by,
     if percent_expressing_layer is not None:
         if percent_expressing_layer not in adata.layers.keys():
             raise ValueError(f"Percent expressing layer '{percent_expressing_layer}' not found")
-        percent_data = adata[:, gene].layers[percent_expressing_layer].toarray().flatten()
+        # Store as DataFrame for easier indexing
+        percent_df = pd.DataFrame({
+            'percent_expr': adata[:, gene].layers[percent_expressing_layer].toarray().flatten()
+        }, index=adata.obs.index)
         percent_source = f"layer '{percent_expressing_layer}'"
     else:
-        percent_data = expression_data  # Use same data
+        # Store as DataFrame for easier indexing
+        percent_df = pd.DataFrame({
+            'percent_expr': expression_data
+        }, index=adata.obs.index)
         percent_source = data_source
 
     # Build plot data
     plot_data = pd.DataFrame({
         'group': adata.obs[group_by].values,
         'expression': expression_data
-    })
+    }, index=adata.obs.index)
+
+    # Also subset the percent_df to match the current adata subset
+    percent_df = percent_df.loc[adata.obs.index]
 
     if split_by is not None:
         plot_data['split'] = adata.obs[split_by].values
@@ -411,6 +420,10 @@ def vlnplot(adata, gene, group_by,
     subplot_y_data = {}
     subplot_mean_data = {}
 
+    # Initialize critical variables to prevent reference errors
+    global_max_expression = 0
+    mean_axis_scale_factor = 1.0
+
     # Plot each subplot
     for idx, (ax1, ax2, row, col) in enumerate(ax_pairs):
 
@@ -492,7 +505,9 @@ def vlnplot(adata, gene, group_by,
                     if percent_expressing_layer is not None:
                         # Use raw layer to identify expressing cells
                         percent_group_indices = subset_data[subset_data['group'] == group].index
-                        percent_group_data = percent_data[percent_group_indices]
+                        # Use DataFrame indexing to get group data
+                        group_indices = subset_data[subset_data['group'] == group].index
+                        percent_group_data = percent_df.loc[group_indices, 'percent_expr']
                         expressing_mask = percent_group_data > 0
 
                         if expressing_mask.sum() > 0:
@@ -524,9 +539,9 @@ def vlnplot(adata, gene, group_by,
                     if len(group_data) > 0:
                         n_cells = len(group_data)
                         if percent_expressing_layer is not None:
-                            # Use percent_data for % expressing calculation
-                            percent_group_indices = subset_data[subset_data['group'] == group].index
-                            percent_group_data = percent_data[percent_group_indices]
+                            # Use percent_df for % expressing calculation
+                            group_indices = subset_data[subset_data['group'] == group].index
+                            percent_group_data = percent_df.loc[group_indices, 'percent_expr']
                             frac_expressing = (percent_group_data > 0).mean()
                         else:
                             frac_expressing = (group_data > 0).mean()
@@ -597,9 +612,9 @@ def vlnplot(adata, gene, group_by,
                         if plot_mean:
                         # Calculate mean of expressing cells for this split
                             if percent_expressing_layer is not None:
-                                # Get the indices for this specific split group
+                                # Use DataFrame indexing to get split data for mean calculation
                                 split_indices = group_data[group_data['split'] == split_cat].index
-                                percent_split_data = percent_data[split_indices]
+                                percent_split_data = percent_df.loc[split_indices, 'percent_expr']
                                 expressing_mask = percent_split_data > 0
 
                                 if expressing_mask.sum() > 0:
@@ -641,9 +656,9 @@ def vlnplot(adata, gene, group_by,
                         if len(split_data) > 0:
                             n_cells = len(split_data)
                             if percent_expressing_layer is not None:
-                                # Use percent_data for % expressing calculation  
-                                percent_split_indices = group_data[group_data['split'] == split_cat].index
-                                percent_split_data = percent_data[percent_split_indices]
+                                # Use DataFrame indexing to get split data for fraction calculation
+                                split_indices = group_data[group_data['split'] == split_cat].index
+                                percent_split_data = percent_df.loc[split_indices, 'percent_expr']
                                 frac_expressing = (percent_split_data > 0).mean()
                             else:
                                 frac_expressing = (split_data > 0).mean()
@@ -826,3 +841,123 @@ def vlnplot(adata, gene, group_by,
     plt.tight_layout()
 
     return fig
+
+
+def vlnplot_scvi(adata, gene, group_by,
+                    title=None,
+                    layer=None,
+                    raw_layer='raw',
+                    expression_threshold=0.1,
+                    split_by=None,
+                    facet_by=None,
+                    facet_col=None,
+                    group_order=None,
+                    split_order=None,
+                    facet_order=None,
+                    facet_col_order=None,
+                    group_colors=None,
+                    split_colors=None,
+                    jitter_points=True,
+                    jitter_dot_size=12,
+                    plot_mean=True,
+                    show_fraction=True,
+                    show_stats=True,
+                    show_legend=True,
+                    title_fontsize=14,           # Main plot title
+                    subtitle_fontsize=9,         # Individual subplot titles
+                    ylabel_fontsize=10,          # Y-axis labels (left side)
+                    ylabel_mean_fontsize=10,     # Mean expression y-axis labels (right side)
+                    xlabel_fontsize=8,           # X-axis group labels (existing, but now more explicit)
+                    axis_tick_fontsize=8,        # Axis tick numbers
+                    legend_fontsize=8,           # Split legend
+                    number_fontsize=6,           # Cell count/fraction numbers (existing)
+                    number_decimal_places=2,
+                    xlabel_rotation=45,
+                    xlabel_ha='right',
+                    figsize=(12, 8),
+                    facet_figsize=None,
+                    facet_ncols=None,
+                    mean_color='black',
+                    free_y=True,
+                    free_mean_y=False,
+                    ylim=None):
+    """
+    Create violin plots optimized for scVI-transformed single-cell data.
+
+    This function handles the dual-data nature of scVI analysis: using scVI-transformed
+    values for expression distributions while using raw counts for accurate fraction
+    expressing calculations.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix containing scVI-transformed data in .X and raw counts in layers
+    gene : str
+        Gene name to plot (must exist in adata.var_names)
+    group_by : str
+        Column name in adata.obs for grouping cells on x-axis
+    raw_layer : str, default 'raw'
+        Layer containing raw counts for fraction expressing calculation.
+        Falls back to main data with threshold if layer not found.
+    expression_threshold : float, default 0.1
+        Threshold for determining expressing cells when using scVI data directly
+    [... other parameters same as vlnplot ...]
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The generated violin plot figure
+    """
+
+    import warnings
+
+    # Input validation
+    if gene not in adata.var_names:
+        raise ValueError(f"Gene '{gene}' not found in adata.var_names")
+    if group_by not in adata.obs.columns:
+        raise ValueError(f"Group column '{group_by}' not found in adata.obs")
+
+    # Get expression data (scVI-transformed)
+    if layer is not None:
+        if layer not in adata.layers.keys():
+            raise ValueError(f"Layer '{layer}' not found in adata.layers")
+        expression_data = adata[:, gene].layers[layer].toarray().flatten()
+        data_source = f"layer '{layer}'"
+    else:
+        expression_data = adata[:, gene].X.toarray().flatten()
+        data_source = "adata.X (scVI-transformed)"
+
+    # Handle fraction expressing data with fallback logic
+    if show_fraction:
+        if raw_layer in adata.layers:
+            # Use raw layer for accurate fraction calculation
+            fraction_data = adata[:, gene].layers[raw_layer].toarray().flatten()
+            fraction_source = f"layer '{raw_layer}'"
+            fraction_threshold = 0
+            print(f"📊 Using {raw_layer} layer for fraction expressing calculation")
+        else:
+            # Fallback to scVI data with threshold
+            warnings.warn(f"Layer '{raw_layer}' not found. Using scVI data with threshold={expression_threshold} for fraction calculation.")
+            fraction_data = expression_data
+            fraction_source = f"{data_source} with threshold"
+            fraction_threshold = expression_threshold
+            print(f"⚠️  Fallback: Using scVI data with threshold {expression_threshold} for fractions")
+    else:
+        fraction_data = None
+        fraction_source = "not used"
+        fraction_threshold = 0
+
+    print(f"📊 Expression data from: {data_source}")
+    print(f"📊 Fraction data from: {fraction_source}")
+
+    # Initialize critical variables to prevent reference errors
+    global_max_expression = 0
+    mean_axis_scale_factor = 1.0
+
+    # Rest of function logic follows the same pattern as vlnplot
+    # but with fixed indexing for fraction calculation...
+
+    # [Function implementation continues with the fixed logic]
+    # For now, return a placeholder
+    print("🚧 vlnplot_scvi function is under development")
+    return None
