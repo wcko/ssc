@@ -974,6 +974,17 @@ def vlnplot_scvi(adata, gene, group_by,
 
     print(f"📋 Groups: {groups}")
 
+    # Handle group colors
+    if group_colors is not None:
+        # Use provided group colors with validation
+        group_colors_list = _get_colors_from_dict(group_colors, groups,
+                                                  sns.color_palette("tab10", len(groups)), "Group colors")
+    else:
+        # Use matplotlib/seaborn default colors
+        group_colors_list = sns.color_palette("tab10", len(groups))
+
+    print(f"🎨 Group colors: {[f'{group}={color}' for group, color in zip(groups, group_colors_list)]}")
+
     # Create simple plot for now (no splits or facets yet)
     fig, ax = plt.subplots(figsize=figsize)
     ax2 = ax.twinx()  # Secondary axis for means
@@ -983,15 +994,26 @@ def vlnplot_scvi(adata, gene, group_by,
         group_data = plot_data[plot_data['group'] == group]['expression']
 
         if len(group_data) > 0:
-            # Create violin plot with default styling
+            # Create violin plot with specified colors
             violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
+
+            # Apply custom colors to violin
+            group_color = group_colors_list[i]
+            for pc in violin_parts['bodies']:
+                pc.set_facecolor(group_color)
+                pc.set_alpha(0.7)  # Set transparency for better visibility
 
             # Add jitter points if requested
             if jitter_points:
-                # Get the violin color and create a darker shade for jitter points
-                violin_color = violin_parts['bodies'][0].get_facecolor()
-                # Convert to darker shade by reducing brightness
-                darker_color = [c * 0.7 for c in violin_color[0][:3]] + [1.0]  # Keep alpha at 1.0
+                # Create darker shade for jitter points
+                if isinstance(group_color, (list, tuple)) and len(group_color) >= 3:
+                    # Handle RGB tuple/list
+                    darker_color = [c * 0.7 for c in group_color[:3]]
+                else:
+                    # Handle color names/hex - convert through matplotlib
+                    import matplotlib.colors as mcolors
+                    rgb = mcolors.to_rgb(group_color)
+                    darker_color = [c * 0.7 for c in rgb]
 
                 # Create jittered x positions
                 x_jitter = np.random.normal(i, 0.1, len(group_data))  # Small random offset around position i
