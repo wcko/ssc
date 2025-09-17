@@ -862,7 +862,13 @@ def vlnplot_scvi(adata, gene, group_by,
                     plot_mean=True,
                     show_fraction=True,
                     show_stats=True,
-                    show_legend=True,
+                    show_legend=None,            # Smart default: False for regular, True for split
+                    legend_loc='upper right',    # Legend position
+                    show_group_legend=None,      # Explicit group legend control
+                    group_legend_loc='below',    # Group legend position
+                    group_legend_fontsize=None,  # Inherits from legend_fontsize
+                    show_xlabel=True,            # Control x-axis label visibility
+                    group_labels=None,           # X-axis abbreviation dictionary
                     title_fontsize=14,           # Main plot title
                     subtitle_fontsize=9,         # Individual subplot titles
                     ylabel_fontsize=10,          # Y-axis labels (left side)
@@ -995,6 +1001,17 @@ def vlnplot_scvi(adata, gene, group_by,
         print(f"📋 Splits: {splits}")
     else:
         splits = [None]
+
+    # Smart default legend behavior
+    if show_legend is None:
+        if split_by is not None:
+            show_legend = True   # Default to True for split mode
+        else:
+            show_legend = False  # Default to False for regular mode
+
+    # Set default group legend fontsize
+    if group_legend_fontsize is None:
+        group_legend_fontsize = legend_fontsize
 
     # Handle group colors
     if group_colors is not None:
@@ -1222,18 +1239,104 @@ def vlnplot_scvi(adata, gene, group_by,
                             fontsize=number_fontsize-1, color='gray',
                             transform=ax.get_xaxis_transform())
 
+    # Legend creation logic
+    legends_created = []
+
+    # Determine which legends to show
+    show_split_legend = show_legend and split_by is not None
+    show_group_legend_flag = show_group_legend or (show_legend and split_by is None)
+
+    # Create split legend if requested
+    if show_split_legend:
+        # Create legend elements for splits
+        split_legend_elements = []
+        for j, split in enumerate(splits):
+            if split_colors and split in split_colors:
+                split_color = split_colors[split]
+            else:
+                # Use same default colors as in the plotting
+                default_colors = ['purple', 'orange', 'green', 'red', 'blue']
+                split_color = default_colors[j % len(default_colors)]
+
+            split_legend_elements.append(plt.Rectangle((0,0), 1, 1,
+                                                     facecolor=split_color, alpha=0.7,
+                                                     edgecolor='black', linewidth=0.5,
+                                                     label=split))
+
+        # Handle custom legend positions for split legend
+        if legend_loc == 'below':
+            split_legend = ax.legend(handles=split_legend_elements, fontsize=legend_fontsize,
+                                   title=split_by, title_fontsize=legend_fontsize,
+                                   bbox_to_anchor=(0.5, -0.25), loc='center',
+                                   ncol=len(splits))
+        elif legend_loc == 'right':
+            split_legend = ax.legend(handles=split_legend_elements, fontsize=legend_fontsize,
+                                   title=split_by, title_fontsize=legend_fontsize,
+                                   bbox_to_anchor=(1.15, 0.5), loc='center left')
+        else:
+            split_legend = ax.legend(handles=split_legend_elements, loc=legend_loc, fontsize=legend_fontsize,
+                                   title=split_by, title_fontsize=legend_fontsize)
+        legends_created.append(split_legend)
+
+    # Create group legend if requested
+    if show_group_legend_flag:
+        # Create legend elements for groups
+        group_legend_elements = []
+        for i, group in enumerate(groups):
+            group_color = group_colors_list[i]
+            group_legend_elements.append(plt.Rectangle((0,0), 1, 1,
+                                                      facecolor=group_color, alpha=0.7,
+                                                      edgecolor='black', linewidth=0.5,
+                                                      label=group))
+
+        # Position group legend
+        if group_legend_loc == 'below':
+            # Adjust position if split legend is also below
+            y_offset = -0.25 if not (show_split_legend and legend_loc == 'below') else -0.35
+            group_legend = ax.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
+                                   title=group_by, title_fontsize=group_legend_fontsize,
+                                   bbox_to_anchor=(0.5, y_offset), loc='center',
+                                   ncol=len(groups))
+        elif group_legend_loc == 'right':
+            # Adjust position if split legend is also right
+            x_offset = 1.15 if not (show_split_legend and legend_loc == 'right') else 1.30
+            group_legend = ax.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
+                                   title=group_by, title_fontsize=group_legend_fontsize,
+                                   bbox_to_anchor=(x_offset, 0.5), loc='center left')
+        else:
+            group_legend = ax.legend(handles=group_legend_elements, loc=group_legend_loc,
+                                   fontsize=group_legend_fontsize,
+                                   title=group_by, title_fontsize=group_legend_fontsize)
+
+        # If we have both legends, we need to add the group legend manually
+        if show_split_legend:
+            ax.add_artist(split_legend)  # Keep the split legend
+
     # Format axes
     ax.set_xticks(range(len(groups)))
 
-    # Position x-axis labels based on whether fraction numbers are shown
-    if show_fraction:
-        # Move labels below the three-row numbers
-        ax.set_xticklabels(groups, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
-        # Move x-axis labels below numbers with appropriate spacing
-        ax.tick_params(axis='x', which='major', pad=70)  # Reduced padding to bring labels up a bit
+    # Determine x-axis labels (use abbreviations if provided and group legend is shown)
+    if group_labels is not None and show_group_legend_flag:
+        # Use abbreviated labels when group legend is shown
+        x_labels = [group_labels.get(group, group) for group in groups]
+        print(f"📋 Using abbreviated x-axis labels: {dict(zip(groups, x_labels))}")
     else:
-        # Normal position when no numbers shown
-        ax.set_xticklabels(groups, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+        # Use full group names
+        x_labels = groups
+
+    # Position x-axis labels based on whether fraction numbers are shown and xlabel visibility
+    if show_xlabel:
+        if show_fraction:
+            # Move labels below the three-row numbers
+            ax.set_xticklabels(x_labels, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+            # Move x-axis labels below numbers with appropriate spacing
+            ax.tick_params(axis='x', which='major', pad=70)  # Reduced padding to bring labels up a bit
+        else:
+            # Normal position when no numbers shown
+            ax.set_xticklabels(x_labels, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+    else:
+        # Hide x-axis labels
+        ax.set_xticklabels([])
 
     ax.set_ylabel(f'{gene} Expression', fontsize=ylabel_fontsize)
 
