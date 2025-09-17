@@ -406,28 +406,6 @@ def vlnplot(adata, gene, group_by,
     else:
         print(f"🎯 Free y-axis mode: each subplot will calculate independent limits")
 
-    # Calculate scaling for means
-    if plot_mean:
-        grouping_columns = ['group']
-        if facet_by is not None:
-            grouping_columns.append('facet_by')
-        if facet_col is not None:
-            grouping_columns.append('facet_col')
-        if split_by is not None:
-            grouping_columns.append('split')
-
-        print(f"🔍 Using grouping columns: {grouping_columns}")
-        group_means = plot_data.groupby(grouping_columns, observed=True)['expression'].mean()
-        global_max_mean = group_means.max() if len(group_means) > 0 else 1.0
-        global_max_expression = plot_data['expression'].max()
-
-        if global_max_mean > 0:
-            r_scale_factor = global_max_expression / global_max_mean
-            print(f"📏 Mean axis scaling factor: {r_scale_factor:.3f}")
-        else:
-            r_scale_factor = 1.0
-            print(f"⚠️  No positive means found, using scale factor: 1.0")
-
     # Storage for scaling
     all_means = []
     subplot_y_data = {}
@@ -769,6 +747,22 @@ def vlnplot(adata, gene, group_by,
         ax1.spines['top'].set_visible(False)
         ax2.spines['top'].set_visible(False)
 
+    # Calculate mean-axis scaling using expressing-cells-only means
+    if plot_mean:
+        if len(all_means) > 0:
+            global_max_mean = max(all_means)
+            global_max_expression = plot_data['expression'].max()
+
+            if global_max_mean > 0:
+                mean_axis_scale_factor = global_max_expression / global_max_mean
+                print(f"📏 Mean-axis scaling factor: {mean_axis_scale_factor:.3f}")
+            else:
+                mean_axis_scale_factor = 1.0
+                print(f"⚠️  No positive means found, using scale factor: 1.0")
+        else:
+            mean_axis_scale_factor = 1.0
+            print(f"⚠️  No means collected, using scale factor: 1.0")
+
     # Apply ylim to all subplots if specified (overrides free_y behavior)
     if ylim is not None:
         for idx, (ax1, ax2, row, col) in enumerate(ax_pairs):
@@ -796,11 +790,11 @@ def vlnplot(adata, gene, group_by,
                     ax2.set_ylim(0, 1)
         else:
             # Global scaling for all mean axes
-            if r_scale_factor > 0:
-                mean_axis_max = global_max_expression / r_scale_factor * 1.1
+            if mean_axis_scale_factor > 0:
+                mean_axis_max = global_max_expression / mean_axis_scale_factor * 1.1
                 for _, ax2, _, _ in ax_pairs:
                     ax2.set_ylim(0, mean_axis_max)
-                print(f"🎯 Global mean expression axis max: {mean_axis_max:.3f} (scaling)")
+                print(f"🎯 Global mean expression axis max: {mean_axis_max:.3f} (mean-axis scaling)")
             else:
                 for _, ax2, _, _ in ax_pairs:
                     ax2.set_ylim(0, 1)
