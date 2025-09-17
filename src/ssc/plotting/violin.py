@@ -950,14 +950,117 @@ def vlnplot_scvi(adata, gene, group_by,
     print(f"📊 Expression data from: {data_source}")
     print(f"📊 Fraction data from: {fraction_source}")
 
-    # Initialize critical variables to prevent reference errors
-    global_max_expression = 0
-    mean_axis_scale_factor = 1.0
+    # Create DataFrames for clean indexing
+    plot_data = pd.DataFrame({
+        'group': adata.obs[group_by].values,
+        'expression': expression_data
+    }, index=adata.obs.index)
 
-    # Rest of function logic follows the same pattern as vlnplot
-    # but with fixed indexing for fraction calculation...
+    if show_fraction:
+        fraction_df = pd.DataFrame({
+            'fraction_expr': fraction_data
+        }, index=adata.obs.index)
+    else:
+        fraction_df = None
 
-    # [Function implementation continues with the fixed logic]
-    # For now, return a placeholder
-    print("🚧 vlnplot_scvi function is under development")
-    return None
+    # Get unique groups and order them
+    if group_order is not None:
+        groups = [g for g in group_order if g in plot_data['group'].unique()]
+        # Add any missing groups
+        missing_groups = [g for g in plot_data['group'].unique() if g not in groups]
+        groups.extend(missing_groups)
+    else:
+        groups = sorted(plot_data['group'].unique())
+
+    print(f"📋 Groups: {groups}")
+
+    # Create simple plot for now (no splits or facets yet)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax2 = ax.twinx()  # Secondary axis for means
+
+    # Create violin plot for each group
+    for i, group in enumerate(groups):
+        group_data = plot_data[plot_data['group'] == group]['expression']
+
+        if len(group_data) > 0:
+            # Create violin plot with default styling
+            violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
+
+            # Add jitter points if requested
+            if jitter_points:
+                # Get the violin color and create a darker shade for jitter points
+                violin_color = violin_parts['bodies'][0].get_facecolor()
+                # Convert to darker shade by reducing brightness
+                darker_color = [c * 0.7 for c in violin_color[0][:3]] + [1.0]  # Keep alpha at 1.0
+
+                # Create jittered x positions
+                x_jitter = np.random.normal(i, 0.1, len(group_data))  # Small random offset around position i
+                ax.scatter(x_jitter, group_data, s=jitter_dot_size, alpha=0.6, color=darker_color, edgecolors='none')
+
+            # Add mean dot if requested
+            if plot_mean and show_fraction and fraction_df is not None:
+                # Calculate mean of expressing cells only
+                group_fraction_data = fraction_df.loc[plot_data[plot_data['group'] == group].index, 'fraction_expr']
+                expressing_mask = group_fraction_data > fraction_threshold
+
+                if expressing_mask.sum() > 0:
+                    mean_expr = group_data[expressing_mask].mean()
+                    ax2.scatter(i, mean_expr, c=mean_color, s=60, marker='o',
+                               edgecolors='white', linewidth=1, zorder=10)
+
+            # Add three-row labels if requested: total cells, expressing cells, fraction
+            if show_fraction and fraction_df is not None:
+                n_cells = len(group_data)
+                group_fraction_data = fraction_df.loc[plot_data[plot_data['group'] == group].index, 'fraction_expr']
+                expressing_mask = group_fraction_data > fraction_threshold
+                n_expressing = expressing_mask.sum()
+                frac_expressing = expressing_mask.mean()
+
+                # Row 1: Total cell count (moved closer to violins)
+                ax.text(i, -0.04, f'{n_cells}', ha='center', va='top',
+                       fontsize=number_fontsize, weight='bold',
+                       transform=ax.get_xaxis_transform())
+                # Row 2: Number of expressing cells
+                ax.text(i, -0.10, f'{n_expressing}', ha='center', va='top',
+                       fontsize=number_fontsize, weight='bold', color='darkgreen',
+                       transform=ax.get_xaxis_transform())
+                # Row 3: Fraction expressing
+                ax.text(i, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
+                       ha='center', va='top', fontsize=number_fontsize-1,
+                       transform=ax.get_xaxis_transform())
+
+    # Format axes
+    ax.set_xticks(range(len(groups)))
+
+    # Position x-axis labels based on whether fraction numbers are shown
+    if show_fraction:
+        # Move labels below the three-row numbers
+        ax.set_xticklabels(groups, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+        # Move x-axis labels below numbers with appropriate spacing
+        ax.tick_params(axis='x', which='major', pad=70)  # Reduced padding to bring labels up a bit
+    else:
+        # Normal position when no numbers shown
+        ax.set_xticklabels(groups, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+
+    ax.set_ylabel(f'{gene} Expression', fontsize=ylabel_fontsize)
+
+    if plot_mean:
+        ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize)
+
+    # Set title
+    plot_title = title or f'{gene} Expression (scVI)'
+    ax.set_title(plot_title, fontsize=title_fontsize)
+
+    # Ensure y-axis starts at 0 to show full violin range
+    y_min, y_max = ax.get_ylim()
+    ax.set_ylim(0, y_max)
+
+    # Adjust layout for three rows of numbers
+    if show_fraction:
+        plt.subplots_adjust(bottom=0.35)
+
+    plt.tight_layout()
+
+    print(f"✅ Basic vlnplot_scvi completed for {gene}")
+    print(f"📊 Shows: Total cells | Expressing cells | Fraction expressing")
+    return fig
