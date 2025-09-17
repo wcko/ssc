@@ -608,9 +608,9 @@ def vlnplot(adata, gene, group_by,
                             darker_color = tuple(c * 0.7 for c in split_color[:3])
                             ax1.scatter(x_jitter, split_data,
                                     c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
-                            
+
                         if plot_mean:
-                        # Calculate mean of expressing cells for this split
+                            # Calculate mean of expressing cells for this split
                             if percent_expressing_layer is not None:
                                 # Use DataFrame indexing to get split data for mean calculation
                                 split_indices = group_data[group_data['split'] == split_cat].index
@@ -956,6 +956,15 @@ def vlnplot_scvi(adata, gene, group_by,
         'expression': expression_data
     }, index=adata.obs.index)
 
+    # Add split data if specified
+    if split_by is not None:
+        if split_by not in adata.obs.columns:
+            raise ValueError(f"Split column '{split_by}' not found in adata.obs")
+        plot_data['split'] = adata.obs[split_by].values
+        print(f"📊 Split by: {split_by}")
+    else:
+        plot_data['split'] = None
+
     if show_fraction:
         fraction_df = pd.DataFrame({
             'fraction_expr': fraction_data
@@ -974,6 +983,19 @@ def vlnplot_scvi(adata, gene, group_by,
 
     print(f"📋 Groups: {groups}")
 
+    # Get unique splits if splitting
+    if split_by is not None:
+        if split_order is not None:
+            splits = [s for s in split_order if s in plot_data['split'].unique()]
+            # Add any missing splits
+            missing_splits = [s for s in plot_data['split'].unique() if s not in splits]
+            splits.extend(missing_splits)
+        else:
+            splits = sorted(plot_data['split'].unique())
+        print(f"📋 Splits: {splits}")
+    else:
+        splits = [None]
+
     # Handle group colors
     if group_colors is not None:
         # Use provided group colors with validation
@@ -989,67 +1011,216 @@ def vlnplot_scvi(adata, gene, group_by,
     fig, ax = plt.subplots(figsize=figsize)
     ax2 = ax.twinx()  # Secondary axis for means
 
-    # Create violin plot for each group
-    for i, group in enumerate(groups):
-        group_data = plot_data[plot_data['group'] == group]['expression']
+    # Create violin plots (with or without splits)
+    if split_by is None:
+        # Original single violin logic
+        for i, group in enumerate(groups):
+            group_data = plot_data[plot_data['group'] == group]['expression']
 
-        if len(group_data) > 0:
-            # Create violin plot with specified colors
-            violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
+            if len(group_data) > 0:
+                # Create violin plot with specified colors
+                violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
 
-            # Apply custom colors to violin
-            group_color = group_colors_list[i]
-            for pc in violin_parts['bodies']:
-                pc.set_facecolor(group_color)
-                pc.set_alpha(0.7)  # Set transparency for better visibility
+                # Apply custom colors to violin
+                group_color = group_colors_list[i]
+                for pc in violin_parts['bodies']:
+                    pc.set_facecolor(group_color)
+                    pc.set_alpha(0.7)
+                    pc.set_edgecolor('black')
+                    pc.set_linewidth(0.5)
 
-            # Add jitter points if requested
-            if jitter_points:
-                # Create darker shade for jitter points
-                if isinstance(group_color, (list, tuple)) and len(group_color) >= 3:
-                    # Handle RGB tuple/list
-                    darker_color = [c * 0.7 for c in group_color[:3]]
-                else:
-                    # Handle color names/hex - convert through matplotlib
-                    import matplotlib.colors as mcolors
-                    rgb = mcolors.to_rgb(group_color)
-                    darker_color = [c * 0.7 for c in rgb]
+                # Add jitter points for regular violins
+                if jitter_points:
+                    x_jitter = np.random.normal(i, 0.1, size=len(group_data))
+                    # Create darker version of violin color
+                    if isinstance(group_color, str):
+                        group_color_rgb = mcolors.to_rgb(group_color)
+                    else:
+                        group_color_rgb = group_color[:3]
+                    darker_color = tuple(c * 0.7 for c in group_color_rgb)
+                    ax.scatter(x_jitter, group_data,
+                            c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
 
-                # Create jittered x positions
-                x_jitter = np.random.normal(i, 0.1, len(group_data))  # Small random offset around position i
-                ax.scatter(x_jitter, group_data, s=jitter_dot_size, alpha=0.6, color=darker_color, edgecolors='none')
+                # Add mean expression points if enabled
+                if plot_mean:
+                    if fraction_df is not None:
+                        # Use raw data for identifying expressing cells for mean calculation
+                        group_indices = plot_data[plot_data['group'] == group].index
+                        group_fraction_data = fraction_df.loc[group_indices, 'fraction_expr']
+                        expressing_mask = group_fraction_data > fraction_threshold
+                        if expressing_mask.sum() > 0:
+                            group_mean = group_data[expressing_mask].mean()
+                        else:
+                            group_mean = 0
+                    else:
+                        # Fallback: use expression data itself
+                        expressing_mask = group_data > expression_threshold
+                        if expressing_mask.sum() > 0:
+                            group_mean = group_data[expressing_mask].mean()
+                        else:
+                            group_mean = 0
 
-            # Add mean dot if requested
-            if plot_mean and show_fraction and fraction_df is not None:
-                # Calculate mean of expressing cells only
-                group_fraction_data = fraction_df.loc[plot_data[plot_data['group'] == group].index, 'fraction_expr']
-                expressing_mask = group_fraction_data > fraction_threshold
+                    if ax2 is not None:
+                        ax2.scatter(i, group_mean, c=mean_color, s=60, marker='o',
+                                edgecolors='white', linewidth=1, zorder=10)
 
-                if expressing_mask.sum() > 0:
-                    mean_expr = group_data[expressing_mask].mean()
-                    ax2.scatter(i, mean_expr, c=mean_color, s=60, marker='o',
-                               edgecolors='white', linewidth=1, zorder=10)
+    # Add fraction numbers for regular violins
+    if show_fraction and split_by is None:
+        for i, group in enumerate(groups):
+            group_data = plot_data[plot_data['group'] == group]['expression']
 
-            # Add three-row labels if requested: total cells, expressing cells, fraction
-            if show_fraction and fraction_df is not None:
+            if len(group_data) > 0:
                 n_cells = len(group_data)
-                group_fraction_data = fraction_df.loc[plot_data[plot_data['group'] == group].index, 'fraction_expr']
-                expressing_mask = group_fraction_data > fraction_threshold
-                n_expressing = expressing_mask.sum()
-                frac_expressing = expressing_mask.mean()
+                if fraction_df is not None:
+                    # Use raw data for fraction calculation
+                    group_indices = plot_data[plot_data['group'] == group].index
+                    group_fraction_data = fraction_df.loc[group_indices, 'fraction_expr']
+                    n_expressing = (group_fraction_data > fraction_threshold).sum()
+                    frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                else:
+                    # Fallback: use expression data itself
+                    n_expressing = (group_data > expression_threshold).sum()
+                    frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
 
-                # Row 1: Total cell count (moved closer to violins)
-                ax.text(i, -0.04, f'{n_cells}', ha='center', va='top',
-                       fontsize=number_fontsize, weight='bold',
-                       transform=ax.get_xaxis_transform())
-                # Row 2: Number of expressing cells
-                ax.text(i, -0.10, f'{n_expressing}', ha='center', va='top',
-                       fontsize=number_fontsize, weight='bold', color='darkgreen',
-                       transform=ax.get_xaxis_transform())
-                # Row 3: Fraction expressing
+                # Total cells - positioned just below x-axis
+                ax.text(i, -0.08, f'{n_cells}', ha='center', va='top',
+                        fontsize=number_fontsize, weight='bold',
+                        transform=ax.get_xaxis_transform())
+                # Expressing cells - middle row
+                ax.text(i, -0.12, f'{n_expressing}', ha='center', va='top',
+                        fontsize=number_fontsize-1,
+                        transform=ax.get_xaxis_transform())
+                # Fraction expressing - bottom row
                 ax.text(i, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
-                       ha='center', va='top', fontsize=number_fontsize-1,
-                       transform=ax.get_xaxis_transform())
+                        ha='center', va='top', fontsize=number_fontsize-1,
+                        transform=ax.get_xaxis_transform())
+            else:
+                # Empty data indicators
+                ax.text(i, -0.08, '0', ha='center', va='top',
+                        fontsize=number_fontsize, weight='bold', color='gray',
+                        transform=ax.get_xaxis_transform())
+                ax.text(i, -0.12, '0', ha='center', va='top',
+                        fontsize=number_fontsize-1, color='gray',
+                        transform=ax.get_xaxis_transform())
+                ax.text(i, -0.16, '--', ha='center', va='top',
+                        fontsize=number_fontsize-1, color='gray',
+                        transform=ax.get_xaxis_transform())
+
+    else:
+        # Split violin logic
+        violin_width = 0.8 / len(splits)  # Divide space among splits
+
+        for i, group in enumerate(groups):
+            group_data_all = plot_data[plot_data['group'] == group]
+
+            for j, split in enumerate(splits):
+                # Get data for this group + split combination
+                split_data = group_data_all[group_data_all['split'] == split]['expression']
+
+                if len(split_data) > 0:
+                    # Calculate position for this split within the group
+                    x_offset = (j - (len(splits) - 1) / 2) * violin_width
+                    x_pos = i + x_offset
+
+                    # Create violin plot
+                    violin_parts = ax.violinplot([split_data], positions=[x_pos], widths=violin_width * 0.8,
+                                                showmeans=False, showextrema=False)
+
+                    # Apply split colors
+                    if split_colors and split in split_colors:
+                        split_color = split_colors[split]
+                    else:
+                        # Default colors if no custom split colors provided
+                        default_colors = ['purple', 'orange', 'green', 'red', 'blue']
+                        split_color = default_colors[j % len(default_colors)]
+
+                    for pc in violin_parts['bodies']:
+                        pc.set_facecolor(split_color)
+                        pc.set_alpha(0.7)
+                        pc.set_edgecolor('black')
+                        pc.set_linewidth(0.5)
+
+                    # Add jitter points
+                    if jitter_points:
+                        x_jitter = np.random.normal(x_pos, violin_width * 0.08, size=len(split_data))
+                        # Create darker version of violin color
+                        if isinstance(split_color, str):
+                            split_color_rgb = mcolors.to_rgb(split_color)
+                        else:
+                            split_color_rgb = split_color[:3]
+                        darker_color = tuple(c * 0.7 for c in split_color_rgb)
+                        ax.scatter(x_jitter, split_data,
+                                c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
+
+                    # Add mean expression points if enabled
+                    if plot_mean:
+                        if fraction_df is not None:
+                            # Use raw data for identifying expressing cells for mean calculation
+                            split_indices = group_data_all[group_data_all['split'] == split].index
+                            split_fraction_data = fraction_df.loc[split_indices, 'fraction_expr']
+                            expressing_mask = split_fraction_data > fraction_threshold
+                            if expressing_mask.sum() > 0:
+                                split_mean = split_data[expressing_mask].mean()
+                            else:
+                                split_mean = 0
+                        else:
+                            # Fallback: use expression data itself
+                            expressing_mask = split_data > expression_threshold
+                            if expressing_mask.sum() > 0:
+                                split_mean = split_data[expressing_mask].mean()
+                            else:
+                                split_mean = 0
+
+                        if ax2 is not None:
+                            ax2.scatter(x_pos, split_mean, c=mean_color, s=60, marker='o',
+                                    edgecolors='white', linewidth=1, zorder=10)
+
+    # Add fraction numbers for split violins
+    if show_fraction and split_by is not None:
+        for i, group in enumerate(groups):
+            group_data_all = plot_data[plot_data['group'] == group]
+
+            for j, split in enumerate(splits):
+                split_data = group_data_all[group_data_all['split'] == split]['expression']
+                x_offset = (j - (len(splits) - 1) / 2) * violin_width
+                x_pos = i + x_offset
+
+                if len(split_data) > 0:
+                    n_cells = len(split_data)
+                    if fraction_df is not None:
+                        # Use raw data for fraction calculation
+                        split_indices = group_data_all[group_data_all['split'] == split].index
+                        split_fraction_data = fraction_df.loc[split_indices, 'fraction_expr']
+                        n_expressing = (split_fraction_data > fraction_threshold).sum()
+                        frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                    else:
+                        # Fallback: use expression data itself
+                        n_expressing = (split_data > expression_threshold).sum()
+                        frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+
+                    # Total cells - positioned just below x-axis
+                    ax.text(x_pos, -0.08, f'{n_cells}', ha='center', va='top',
+                            fontsize=number_fontsize, weight='bold',
+                            transform=ax.get_xaxis_transform())
+                    # Expressing cells - middle row
+                    ax.text(x_pos, -0.12, f'{n_expressing}', ha='center', va='top',
+                            fontsize=number_fontsize-1,
+                            transform=ax.get_xaxis_transform())
+                    # Fraction expressing - bottom row
+                    ax.text(x_pos, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
+                            ha='center', va='top', fontsize=number_fontsize-1,
+                            transform=ax.get_xaxis_transform())
+                else:
+                    # Empty data indicators
+                    ax.text(x_pos, -0.08, '0', ha='center', va='top',
+                            fontsize=number_fontsize, weight='bold', color='gray',
+                            transform=ax.get_xaxis_transform())
+                    ax.text(x_pos, -0.12, '0', ha='center', va='top',
+                            fontsize=number_fontsize-1, color='gray',
+                            transform=ax.get_xaxis_transform())
+                    ax.text(x_pos, -0.16, '--', ha='center', va='top',
+                            fontsize=number_fontsize-1, color='gray',
+                            transform=ax.get_xaxis_transform())
 
     # Format axes
     ax.set_xticks(range(len(groups)))
