@@ -777,6 +777,7 @@ def vlnplot(adata, gene, group_by,
 
     # Storage for scaling
     all_means = []
+    all_means_pos_frac = []  # For expressing-cells-only means
     subplot_y_data = {}
     subplot_mean_data = {}
 
@@ -861,32 +862,13 @@ def vlnplot(adata, gene, group_by,
                                 c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
 
 
-                      # Calculate mean of expressing cells only
-                    if percent_expressing_layer is not None:
-                        # Use raw layer to identify expressing cells
-                        percent_group_indices = subset_data[subset_data['group'] == group].index
-                        # Use DataFrame indexing to get group data
-                        group_indices = subset_data[subset_data['group'] == group].index
-                        percent_group_data = percent_df.loc[group_indices, 'percent_expr']
-                        expressing_mask = percent_group_data > 0
-
-                        if expressing_mask.sum() > 0:
-                            # Mean of only expressing cells (using scVI-normalized values)
-                            group_mean = group_expr[expressing_mask].mean()
-                        else:
-                            group_mean = 0  # No expressing cells
-                    else:
-                        # Fallback: traditional mean if no raw layer
-                        expressing_mask = group_expr > 0
-                        if expressing_mask.sum() > 0:
-                            group_mean = group_expr[expressing_mask].mean()
-                        else:
-                            group_mean = 0
+                      # Calculate true mean of all cells
+                    group_mean = group_expr.mean()
 
                     subplot_means.append(group_mean)
 
                     if plot_mean:
-                        ax2.scatter(i, group_mean, c=mean_color, s=60, marker='o',
+                        ax2.scatter(i, group_mean, c=mean_color, s=mean_size, marker='o',
                                 edgecolors='white', linewidth=1, zorder=10)
                 else:
                     _draw_empty_placeholder_clean(ax1, i, "No data")
@@ -970,24 +952,8 @@ def vlnplot(adata, gene, group_by,
                                     c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
 
                         if plot_mean:
-                            # Calculate mean of expressing cells for this split
-                            if percent_expressing_layer is not None:
-                                # Use DataFrame indexing to get split data for mean calculation
-                                split_indices = group_data[group_data['split'] == split_cat].index
-                                percent_split_data = percent_df.loc[split_indices, 'percent_expr']
-                                expressing_mask = percent_split_data > 0
-
-                                if expressing_mask.sum() > 0:
-                                    split_mean = split_data[expressing_mask].mean()
-                                else:
-                                    split_mean = 0
-                            else:
-                                # Fallback: use expression data itself to find expressing cells
-                                expressing_mask = split_data > 0
-                                if expressing_mask.sum() > 0:
-                                    split_mean = split_data[expressing_mask].mean()
-                                else:
-                                    split_mean = 0
+                            # Calculate true mean of all cells for this split
+                            split_mean = split_data.mean()
 
                             mean_positions.append(x_pos)
                             mean_values.append(split_mean)
@@ -1001,7 +967,7 @@ def vlnplot(adata, gene, group_by,
 
             if plot_mean:
                 for pos, mean_val in zip(mean_positions, mean_values):
-                    ax2.scatter(pos, mean_val, c=mean_color, s=60, marker='o',
+                    ax2.scatter(pos, mean_val, c=mean_color, s=mean_size, marker='o',
                             edgecolors='white', linewidth=1, zorder=10)
 
             # Cell statistics for split violins - positioned closer to x-axis
@@ -1122,21 +1088,31 @@ def vlnplot(adata, gene, group_by,
         ax1.spines['top'].set_visible(False)
         ax2.spines['top'].set_visible(False)
 
-    # Calculate mean-axis scaling using expressing-cells-only means
+    # Calculate mean-axis scaling
     if plot_mean:
-        if len(all_means) > 0:
-            global_max_mean = max(all_means)
+        # Choose which means to use for scaling
+        if plot_mean_pos_frac and len(all_means_pos_frac) > 0:
+            # Use expressing-cells-only means for scaling (they will be higher)
+            scaling_means = [m for m in all_means_pos_frac if m > 0]
+            mean_type = "expressing-cells-only"
+        else:
+            # Use regular true means for scaling
+            scaling_means = [m for m in all_means if m > 0]
+            mean_type = "true"
+
+        if len(scaling_means) > 0:
+            global_max_mean = max(scaling_means)
             global_max_expression = plot_data['expression'].max()
 
             if global_max_mean > 0:
                 mean_axis_scale_factor = global_max_expression / global_max_mean
-                print(f"📏 Mean-axis scaling factor: {mean_axis_scale_factor:.3f}")
+                print(f"📏 Mean-axis scaling factor ({mean_type} means): {mean_axis_scale_factor:.3f}")
             else:
                 mean_axis_scale_factor = 1.0
-                print(f"⚠️  No positive means found, using scale factor: 1.0")
+                print(f"⚠️  No positive {mean_type} means found, using scale factor: 1.0")
         else:
             mean_axis_scale_factor = 1.0
-            print(f"⚠️  No means collected, using scale factor: 1.0")
+            print(f"⚠️  No {mean_type} means collected, using scale factor: 1.0")
 
     # Apply ylim to all subplots if specified (overrides free_y behavior)
     if ylim is not None:
@@ -1253,6 +1229,10 @@ def vlnplot_scvi(adata, gene, group_by,
                     facet_figsize=None,
                     facet_ncols=None,
                     mean_color='black',
+                    mean_size=60,                     # Size for regular mean expression dots
+                    plot_mean_pos_frac=False,        # Enable expressing-cells-only mean dots
+                    mean_pos_frac_color='red',        # Color for expressing-cells-only mean dots
+                    mean_pos_frac_size=60,            # Size for expressing-cells-only mean dots
                     free_y=True,
                     free_mean_y=False,
                     ylim=None):
@@ -1325,8 +1305,21 @@ def vlnplot_scvi(adata, gene, group_by,
         Show cell counts and fraction expressing below plot
     show_legend : bool, optional
         Show legend. Auto-determined based on split_by if not specified
+    legend_loc : str, default 'upper right'
+        Legend position. Standard matplotlib locations: 'upper right', 'upper left',
+        'lower left', 'lower right', 'right', 'center left', 'center right',
+        'lower center', 'upper center', 'center', 'best'. Custom options: 'below'
+        (places legend below plot), 'right' (places legend to right with spacing).
     xlabel_rotation : float, default 45
         Rotation angle for x-axis labels
+    mean_size : int, default 60
+        Size of regular mean expression dots
+    plot_mean_pos_frac : bool, default False
+        Enable expressing-cells-only mean dots (in addition to regular mean dots)
+    mean_pos_frac_color : str, default 'red'
+        Color for expressing-cells-only mean dots
+    mean_pos_frac_size : int, default 60
+        Size of expressing-cells-only mean dots
     *_fontsize : int
         Font sizes for various plot elements (title, labels, legend, etc.)
 
@@ -1514,6 +1507,9 @@ def vlnplot_scvi(adata, gene, group_by,
 
     print(f"🎨 Group colors: {[f'{group}={color}' for group, color in zip(groups, group_colors_list)]}")
 
+    # Storage for axis scaling
+    all_means_pos_frac = []  # For expressing-cells-only means
+
     # Create simple plot for now (no splits or facets yet)
     fig, ax = plt.subplots(figsize=figsize)
     ax2 = ax.twinx()  # Secondary axis for means
@@ -1550,26 +1546,38 @@ def vlnplot_scvi(adata, gene, group_by,
 
                 # Add mean expression points if enabled
                 if plot_mean:
+                    # Calculate true mean of all cells
+                    group_mean = group_data.mean()
+
+                    if ax2 is not None:
+                        ax2.scatter(i, group_mean, c=mean_color, s=mean_size, marker='o',
+                                edgecolors='white', linewidth=1, zorder=10)
+
+                # Add expressing-cells-only mean if enabled
+                if plot_mean_pos_frac:
                     if fraction_df is not None:
-                        # Use raw data for identifying expressing cells for mean calculation
+                        # Use raw data for identifying expressing cells
                         group_indices = plot_data[plot_data['group'] == group].index
                         group_fraction_data = fraction_df.loc[group_indices, 'fraction_expr']
                         expressing_mask = group_fraction_data > fraction_threshold
                         if expressing_mask.sum() > 0:
-                            group_mean = group_data[expressing_mask].mean()
+                            group_mean_pos_frac = group_data[expressing_mask].mean()
                         else:
-                            group_mean = 0
+                            group_mean_pos_frac = 0
                     else:
                         # Fallback: use expression data itself
                         expressing_mask = group_data > expression_threshold
                         if expressing_mask.sum() > 0:
-                            group_mean = group_data[expressing_mask].mean()
+                            group_mean_pos_frac = group_data[expressing_mask].mean()
                         else:
-                            group_mean = 0
+                            group_mean_pos_frac = 0
 
-                    if ax2 is not None:
-                        ax2.scatter(i, group_mean, c=mean_color, s=60, marker='o',
-                                edgecolors='white', linewidth=1, zorder=10)
+                    if ax2 is not None and group_mean_pos_frac > 0:
+                        ax2.scatter(i, group_mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size, marker='o',
+                                edgecolors='white', linewidth=1, zorder=11)
+
+                    # Collect for axis scaling
+                    all_means_pos_frac.append(group_mean_pos_frac)
 
     # Add fraction numbers for regular violins
     if show_fraction and split_by is None:
@@ -1612,6 +1620,40 @@ def vlnplot_scvi(adata, gene, group_by,
                 ax.text(i, -0.16, '--', ha='center', va='top',
                         fontsize=number_fontsize-1, color='gray',
                         transform=ax.get_xaxis_transform())
+
+        # Axis scaling for simple plots
+        if plot_mean:
+            # Choose which means to use for scaling
+            if plot_mean_pos_frac and len(all_means_pos_frac) > 0:
+                # Use expressing-cells-only means for scaling (they will be higher)
+                scaling_means = [m for m in all_means_pos_frac if m > 0]
+                mean_type = "expressing-cells-only"
+            else:
+                # Use regular true means for scaling (collect them first)
+                all_means = []
+                for i, group in enumerate(groups):
+                    group_data = plot_data[plot_data['group'] == group]['expression']
+                    if len(group_data) > 0:
+                        all_means.append(group_data.mean())
+                scaling_means = [m for m in all_means if m > 0]
+                mean_type = "true"
+
+            if len(scaling_means) > 0:
+                global_max_mean = max(scaling_means)
+                global_max_expression = plot_data['expression'].max()
+
+                if global_max_mean > 0:
+                    mean_axis_scale_factor = global_max_expression / global_max_mean
+                    mean_axis_max = global_max_expression / mean_axis_scale_factor * 1.1
+                    ax2.set_ylim(0, mean_axis_max)
+                    print(f"📏 Mean-axis scaling factor ({mean_type} means): {mean_axis_scale_factor:.3f}")
+                    print(f"🎯 Mean expression axis max: {mean_axis_max:.3f}")
+                else:
+                    ax2.set_ylim(0, 1)
+                    print(f"⚠️  No positive {mean_type} means found, using default axis")
+            else:
+                ax2.set_ylim(0, 1)
+                print(f"⚠️  No {mean_type} means collected, using default axis")
 
     else:
         # Split violin logic
@@ -1661,26 +1703,38 @@ def vlnplot_scvi(adata, gene, group_by,
 
                     # Add mean expression points if enabled
                     if plot_mean:
+                        # Calculate true mean of all cells for this split
+                        split_mean = split_data.mean()
+
+                        if ax2 is not None:
+                            ax2.scatter(x_pos, split_mean, c=mean_color, s=mean_size, marker='o',
+                                    edgecolors='white', linewidth=1, zorder=10)
+
+                    # Add expressing-cells-only mean if enabled
+                    if plot_mean_pos_frac:
                         if fraction_df is not None:
-                            # Use raw data for identifying expressing cells for mean calculation
+                            # Use raw data for identifying expressing cells
                             split_indices = group_data_all[group_data_all['split'] == split].index
                             split_fraction_data = fraction_df.loc[split_indices, 'fraction_expr']
                             expressing_mask = split_fraction_data > fraction_threshold
                             if expressing_mask.sum() > 0:
-                                split_mean = split_data[expressing_mask].mean()
+                                split_mean_pos_frac = split_data[expressing_mask].mean()
                             else:
-                                split_mean = 0
+                                split_mean_pos_frac = 0
                         else:
                             # Fallback: use expression data itself
                             expressing_mask = split_data > expression_threshold
                             if expressing_mask.sum() > 0:
-                                split_mean = split_data[expressing_mask].mean()
+                                split_mean_pos_frac = split_data[expressing_mask].mean()
                             else:
-                                split_mean = 0
+                                split_mean_pos_frac = 0
 
-                        if ax2 is not None:
-                            ax2.scatter(x_pos, split_mean, c=mean_color, s=60, marker='o',
-                                    edgecolors='white', linewidth=1, zorder=10)
+                        if ax2 is not None and split_mean_pos_frac > 0:
+                            ax2.scatter(x_pos, split_mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size, marker='o',
+                                    edgecolors='white', linewidth=1, zorder=11)
+
+                        # Collect for axis scaling
+                        all_means_pos_frac.append(split_mean_pos_frac)
 
     # Add fraction numbers for split violins
     if show_fraction and split_by is not None:
@@ -1780,21 +1834,24 @@ def vlnplot_scvi(adata, gene, group_by,
                                                       label=group))
 
         # Position group legend
-        if group_legend_loc == 'below':
+        # If this is the only legend being shown, use legend_loc instead of group_legend_loc
+        effective_group_loc = legend_loc if not show_split_legend else group_legend_loc
+
+        if effective_group_loc == 'below':
             # Adjust position if split legend is also below
             y_offset = -0.25 if not (show_split_legend and legend_loc == 'below') else -0.35
             group_legend = ax.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
                                    title=group_by, title_fontsize=group_legend_fontsize,
                                    bbox_to_anchor=(0.5, y_offset), loc='center',
                                    ncol=len(groups))
-        elif group_legend_loc == 'right':
+        elif effective_group_loc == 'right':
             # Adjust position if split legend is also right
             x_offset = 1.15 if not (show_split_legend and legend_loc == 'right') else 1.30
             group_legend = ax.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
                                    title=group_by, title_fontsize=group_legend_fontsize,
                                    bbox_to_anchor=(x_offset, 0.5), loc='center left')
         else:
-            group_legend = ax.legend(handles=group_legend_elements, loc=group_legend_loc,
+            group_legend = ax.legend(handles=group_legend_elements, loc=effective_group_loc,
                                    fontsize=group_legend_fontsize,
                                    title=group_by, title_fontsize=group_legend_fontsize)
 
@@ -1805,9 +1862,9 @@ def vlnplot_scvi(adata, gene, group_by,
     # Format axes
     ax.set_xticks(range(len(groups)))
 
-    # Determine x-axis labels (use abbreviations if provided and group legend is shown)
-    if group_labels is not None and show_group_legend_flag:
-        # Use abbreviated labels when group legend is shown
+    # Determine x-axis labels (use abbreviations if provided)
+    if group_labels is not None:
+        # Use abbreviated labels when group_labels is provided
         x_labels = [group_labels.get(group, group) for group in groups]
         print(f"📋 Using abbreviated x-axis labels: {dict(zip(groups, x_labels))}")
     else:
@@ -1830,8 +1887,13 @@ def vlnplot_scvi(adata, gene, group_by,
 
     ax.set_ylabel(f'{gene} Expression', fontsize=ylabel_fontsize)
 
+    # Apply axis tick font sizes
+    ax.tick_params(axis='y', labelsize=axis_tick_fontsize)
+    ax.tick_params(axis='x', labelsize=axis_tick_fontsize)
+
     if plot_mean:
-        ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize)
+        ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize, color=mean_color)
+        ax2.tick_params(axis='y', labelcolor=mean_color, labelsize=axis_tick_fontsize)
 
     # Set title
     plot_title = title or f'{gene} Expression (scVI)'
