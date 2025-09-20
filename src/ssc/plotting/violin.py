@@ -239,7 +239,7 @@ def _process_comparisons(adata, gene, scvi_model, comparisons, group_by, split_b
                 # Extract stats for this specific gene and comparison
                 gene_stats = _extract_pairwise_comparison(de_results, gene, group1, group2)
                 if gene_stats is not None and not gene_stats.empty:
-                    stats[f"{group1}_vs_{group2}"] = gene_stats
+                    stats[f"group_{group1}_vs_{group2}"] = gene_stats
                     proba_de = gene_stats.get('proba_de', 0)
                     lfc_mean = gene_stats.get('lfc_mean', 0)
                     bayes_factor = gene_stats.get('bayes_factor', 0)
@@ -286,7 +286,7 @@ def _process_comparisons(adata, gene, scvi_model, comparisons, group_by, split_b
                 # Extract stats for this specific gene and comparison
                 gene_stats = _extract_pairwise_comparison(de_results, gene, group1, group2)
                 if gene_stats is not None and not gene_stats.empty:
-                    stats[f"{within_group}_{group1}_vs_{group2}"] = gene_stats
+                    stats[f"split_{within_group}_{group1}_vs_{group2}"] = gene_stats
                     proba_de = gene_stats.get('proba_de', 0)
                     lfc_mean = gene_stats.get('lfc_mean', 0)
                     bayes_factor = gene_stats.get('bayes_factor', 0)
@@ -1522,10 +1522,10 @@ def vlnplot_scvi(adata, gene, group_by,
     # Statistical framework setup
     if annotate_stats is None:
         # Auto-enable if any effects are specified or split stats provided
-        annotate_stats = bool(group_effects or split_effects or split_stats)
+        annotate_stats = bool(group_effects or split_effects or split_stats or comparisons)
 
     if annotate_stats and not scvi_model and not split_stats:
-        raise ValueError("scvi_model is required when annotate_stats=True or when group_effects/split_effects are specified (unless split_stats is provided)")
+        raise ValueError("scvi_model is required when annotate_stats=True or when group_effects/split_effects/comparisons are specified (unless split_stats is provided)")
 
     # Validate statistical effects
     if group_effects and not isinstance(group_effects, list):
@@ -2139,9 +2139,138 @@ def vlnplot_scvi(adata, gene, group_by,
                 else:
                     print(f"   ⚠️ {group}: No split statistics provided")
 
-        # Adjust y-axis to accommodate annotations
+        # Adjust y-axis to accommodate original annotations
         if annotation_count > 0:
             new_y_max = annotation_height_start + annotation_count * annotation_height_step + y_max * 0.1
+            ax.set_ylim(0, new_y_max)
+
+    # Add annotations for new comparison system
+    if comparison_stats:
+        print(f"📊 Adding comparison annotations...")
+        y_min, y_max = ax.get_ylim()
+
+        # Calculate annotation heights starting after existing annotations
+        annotation_height_start = y_max * 1.05
+        if annotate_stats and gene_statistics:
+            # If we already have annotations, stack these higher
+            existing_annotations = len([c for c in (group_effects or []) if isinstance(c, tuple) and len(c) == 2])
+            annotation_height_start = y_max * (1.05 + existing_annotations * 0.08)
+
+        annotation_height_step = y_max * 0.08
+        comparison_annotation_count = 0
+
+        for comp_key, stats in comparison_stats.items():
+            print(f"   🔍 Processing comparison key: '{comp_key}'")
+            proba_de = stats.get('proba_de', 0)
+            lfc = stats.get('lfc_mean', 0)
+
+            # Convert Series to scalar if needed
+            if hasattr(proba_de, 'item'):
+                proba_de = proba_de.item()
+            if hasattr(lfc, 'item'):
+                lfc = lfc.item()
+
+            # Determine significance level
+            if proba_de >= proba_de_thresholds[2]:  # 95%
+                stars = "***"
+            elif proba_de >= proba_de_thresholds[1]:  # 80%
+                stars = "**"
+            elif proba_de >= proba_de_thresholds[0]:  # 60%
+                stars = "*"
+            else:
+                stars = "ns"
+
+            # Add annotations if significant OR if detailed_stats is enabled
+            if stars != "ns" or detailed_stats:
+                print(f"   ✅ {comp_key}: {stars} (P={proba_de:.3f}, LFC={lfc:.2f})")
+
+                # Parse comparison key to get positions
+                print(f"   🔍 Parsing key: '{comp_key}' for annotation placement")
+                if comp_key.startswith('group_'):
+                    # Group comparison: extract group names
+                    parts = comp_key.replace('group_', '').split('_vs_')
+                    if len(parts) == 2:
+                        group1, group2 = parts
+                        try:
+                            x1 = groups.index(group1)
+                            x2 = groups.index(group2)
+                            y_pos = annotation_height_start + comparison_annotation_count * annotation_height_step
+
+                            # Add significance line
+                            ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
+                            ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+                            ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+
+                            # Add annotation text
+                            x_center = (x1 + x2) / 2
+                            if detailed_stats:
+                                if stars == "ns":
+                                    annotation = f"P={proba_de:.2f}"
+                                else:
+                                    annotation = f"{stars}\nP={proba_de:.2f}"
+                                if abs(lfc) >= 0.1:
+                                    annotation += f"\nLFC={lfc:.1f}"
+                            else:
+                                annotation = stars
+
+                            print(f"   🎯 Adding text annotation '{annotation}' at x={x_center:.2f}, y={y_pos + y_max*0.03:.2f}")
+                            ax.text(x_center, y_pos + y_max*0.03, annotation, ha='center', va='bottom',
+                                   fontsize=16, fontweight='bold', color='red')
+                            comparison_annotation_count += 1
+                        except ValueError:
+                            print(f"   ⚠️ Groups {group1} or {group2} not found in plot")
+
+                elif comp_key.startswith('split_'):
+                    # Split comparison: handle within-group positioning
+                    parts = comp_key.replace('split_', '').split('_')
+                    if len(parts) >= 3:
+                        within_group = parts[0]
+                        split1, split2 = parts[1], parts[2]
+                        try:
+                            i = groups.index(within_group)
+
+                            # Calculate x positions for the two split categories within this group
+                            x1 = i - 0.2  # Position of first split category
+                            x2 = i + 0.2  # Position of second split category
+
+                            # Position split annotations well within the data area for clear visibility
+                            y_pos = y_max * 0.85
+
+                            # Add significance line
+                            ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
+                            ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+                            ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+
+                            # Add annotation text
+                            x_center = (x1 + x2) / 2
+                            if detailed_stats:
+                                if stars == "ns":
+                                    annotation = f"P={proba_de:.2f}"
+                                else:
+                                    annotation = f"{stars}\nP={proba_de:.2f}"
+                                if abs(lfc) >= 0.1:
+                                    annotation += f"\nLFC={lfc:.1f}"
+                            else:
+                                annotation = stars
+
+                            print(f"   🎯 Adding text annotation '{annotation}' at x={x_center:.2f}, y={y_pos + y_max*0.03:.2f}")
+                            ax.text(x_center, y_pos + y_max*0.03, annotation, ha='center', va='bottom',
+                                   fontsize=16, fontweight='bold', color='red')
+                        except ValueError:
+                            print(f"   ⚠️ Group {within_group} not found in plot")
+            else:
+                print(f"   ○ {comp_key}: ns (P={proba_de:.3f})")
+
+        # Adjust y-axis to accommodate annotations
+        total_annotations = comparison_annotation_count
+        if total_annotations > 0:
+            # For split comparisons, we need extra space at 1.05 * y_max + text height
+            # For group comparisons, we use the standard annotation height calculation
+            max_annotation_height = max(
+                annotation_height_start + total_annotations * annotation_height_step,
+                y_max * 1.25  # Allow ample space for split comparison text at 1.05 * y_max
+            )
+            new_y_max = max_annotation_height + y_max * 0.1
             ax.set_ylim(0, new_y_max)
         else:
             ax.set_ylim(0, y_max)
