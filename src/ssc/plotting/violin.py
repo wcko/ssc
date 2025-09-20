@@ -198,7 +198,7 @@ def _extract_pairwise_comparison(de_results_1vs_all, gene, group1, group2):
         return None
 
 
-def _process_comparisons(adata, gene, scvi_model, comparisons, group_by):
+def _process_comparisons(adata, gene, scvi_model, comparisons, group_by, split_by=None):
     """Simple function to handle comparisons list and return stats for plotting."""
     if not comparisons or not scvi_model:
         return {}
@@ -207,11 +207,20 @@ def _process_comparisons(adata, gene, scvi_model, comparisons, group_by):
     stats = {}
 
     for i, comparison in enumerate(comparisons):
-        if len(comparison) != 3:
-            print(f"⚠️ Skipping invalid comparison {i}: expected 3 elements, got {len(comparison)}")
+        if len(comparison) not in [3, 4]:
+            print(f"⚠️ Skipping invalid comparison {i}: expected 3 or 4 elements, got {len(comparison)}")
             continue
 
-        comp_type, group1, group2 = comparison
+        comp_type = comparison[0]
+
+        # Parse based on tuple length
+        if len(comparison) == 3:
+            # 3-tuple: ('group', 'A', 'B') or old ('split', 'A', 'B')
+            _, group1, group2 = comparison
+            within_group = None
+        else:
+            # 4-tuple: ('split', 'GroupName', 'Split1', 'Split2')
+            _, within_group, group1, group2 = comparison
 
         if comp_type == 'group':
             print(f"   📊 Group comparison: {group1} vs {group2}")
@@ -239,8 +248,56 @@ def _process_comparisons(adata, gene, scvi_model, comparisons, group_by):
                     print(f"   ❌ Failed to extract stats for {gene}")
             else:
                 print(f"   ❌ DE computation failed")
+
+        elif comp_type == 'split':
+            # Validate 4-tuple format and split_by parameter
+            if len(comparison) != 4:
+                print(f"   ⚠️ 'split' comparisons require 4-tuple format: ('split', 'GroupName', 'Split1', 'Split2')")
+                continue
+            if not split_by:
+                print(f"   ⚠️ 'split' comparisons require split_by parameter")
+                continue
+
+            print(f"   📊 Split comparison: {group1} vs {group2} within {within_group}")
+
+            # Create subset: specific group AND specific split categories
+            group_mask = adata.obs[group_by] == within_group
+            split_mask = adata.obs[split_by].isin([group1, group2])
+            combined_mask = group_mask & split_mask
+            subset_data = adata[combined_mask].copy()
+
+            if subset_data.n_obs == 0:
+                print(f"   ⚠️ No cells found for {group1}/{group2} splits within {within_group}")
+                continue
+
+            print(f"   📊 Using {subset_data.n_obs} cells from {within_group} group")
+
+            # Use split_by as the grouping variable for DE computation
+            de_results = _get_or_compute_de_working(
+                scvi_model, subset_data,
+                groupby=split_by,
+                group1=group1,
+                group2=group2,
+                subset_data=subset_data,
+                mode='change'
+            )
+
+            if de_results is not None:
+                # Extract stats for this specific gene and comparison
+                gene_stats = _extract_pairwise_comparison(de_results, gene, group1, group2)
+                if gene_stats is not None and not gene_stats.empty:
+                    stats[f"{within_group}_{group1}_vs_{group2}"] = gene_stats
+                    proba_de = gene_stats.get('proba_de', 0)
+                    lfc_mean = gene_stats.get('lfc_mean', 0)
+                    bayes_factor = gene_stats.get('bayes_factor', 0)
+                    print(f"   ✅ proba_de={proba_de:.3f}, LFC={lfc_mean:.3f}, BF={bayes_factor:.1f}")
+                else:
+                    print(f"   ❌ Failed to extract stats for {gene}")
+            else:
+                print(f"   ❌ Split DE computation failed")
+
         else:
-            print(f"   ⚠️ Unsupported comparison type: {comp_type} (only 'group' supported)")
+            print(f"   ⚠️ Unsupported comparison type: {comp_type} (use 'group' or 'split')")
 
     return stats
 
@@ -1325,20 +1382,36 @@ def vlnplot_scvi(adata, gene, group_by,
         Use compute_split_effects_within_groups() to generate this.
     comparisons : list of tuples, optional
         Statistical comparisons to perform using scVI differential expression.
-        Each comparison is a 3-tuple: ('group', group1, group2)
+        Supports two comparison types:
 
-        **Order matters**: group1 is the reference, group2 is the comparison.
+        **Group comparisons (3-tuple)**: ('group', group1, group2)
+        Compare between categories of group_by variable.
+
+        **Split comparisons (4-tuple)**: ('split', within_group, split1, split2)
+        Compare between categories of split_by variable within a specific group_by category.
+
+        **Order matters**: first category is the reference, second is the comparison.
 
         Examples:
-            [('group', 'Control', 'Treatment')]  # Treatment vs Control
-            [('group', 'Nonlesional', 'SADBE'), # SADBE vs Nonlesional baseline
-             ('group', 'Nonlesional', 'Metal')]  # Metal vs Nonlesional baseline
+            # Group comparisons
+            [('group', 'Control', 'Treatment')]           # Treatment vs Control
+            [('group', 'Nonlesional', 'SADBE'),          # SADBE vs Nonlesional
+             ('group', 'Nonlesional', 'Metal')]          # Metal vs Nonlesional
+
+            # Split comparisons (requires split_by parameter)
+            [('split', 'dupi', 'pre', 'post')]           # post vs pre within dupi group
+            [('split', 'Nonlesional', 'Treatment', 'Control')] # Treatment vs Control within Nonlesional
+
+        **When to use which**:
+        - Use 'group' when comparing different categories of your main grouping variable
+        - Use 'split' when comparing split_by categories within specific groups
+        - Can mix both types in the same comparisons list
 
         **Statistics returned**:
         - proba_de: Probability of differential expression (0-1)
-        - LFC (log fold change): log2(group2/group1)
-          * Positive LFC = group2 > group1 (upregulated)
-          * Negative LFC = group2 < group1 (downregulated)
+        - LFC (log fold change): log2(comparison/reference)
+          * Positive LFC = comparison group higher than reference
+          * Negative LFC = comparison group lower than reference
         - Bayes factor: Evidence strength for differential expression
 
         Requires scvi_model parameter.
@@ -1465,7 +1538,7 @@ def vlnplot_scvi(adata, gene, group_by,
 
     # Process comparisons for statistical annotations
     if comparisons and scvi_model:
-        comparison_stats = _process_comparisons(adata, gene, scvi_model, comparisons, group_by)
+        comparison_stats = _process_comparisons(adata, gene, scvi_model, comparisons, group_by, split_by)
     else:
         comparison_stats = {}
 
