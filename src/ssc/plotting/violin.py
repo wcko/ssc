@@ -198,6 +198,53 @@ def _extract_pairwise_comparison(de_results_1vs_all, gene, group1, group2):
         return None
 
 
+def _process_comparisons(adata, gene, scvi_model, comparisons, group_by):
+    """Simple function to handle comparisons list and return stats for plotting."""
+    if not comparisons or not scvi_model:
+        return {}
+
+    print(f"🔄 Processing {len(comparisons)} comparisons for {gene}...")
+    stats = {}
+
+    for i, comparison in enumerate(comparisons):
+        if len(comparison) != 3:
+            print(f"⚠️ Skipping invalid comparison {i}: expected 3 elements, got {len(comparison)}")
+            continue
+
+        comp_type, group1, group2 = comparison
+
+        if comp_type == 'group':
+            print(f"   📊 Group comparison: {group1} vs {group2}")
+
+            # Use existing working DE function
+            de_results = _get_or_compute_de_working(
+                scvi_model, adata,
+                groupby=group_by,
+                group1=group1,      # Add specific group names for proper caching
+                group2=group2,      # Add specific group names for proper caching
+                subset_data=adata,  # Use full data for group comparisons
+                mode='change'       # Use change mode (working approach)
+            )
+
+            if de_results is not None:
+                # Extract stats for this specific gene and comparison
+                gene_stats = _extract_pairwise_comparison(de_results, gene, group1, group2)
+                if gene_stats is not None and not gene_stats.empty:
+                    stats[f"{group1}_vs_{group2}"] = gene_stats
+                    proba_de = gene_stats.get('proba_de', 0)
+                    lfc_mean = gene_stats.get('lfc_mean', 0)
+                    bayes_factor = gene_stats.get('bayes_factor', 0)
+                    print(f"   ✅ proba_de={proba_de:.3f}, LFC={lfc_mean:.3f}, BF={bayes_factor:.1f}")
+                else:
+                    print(f"   ❌ Failed to extract stats for {gene}")
+            else:
+                print(f"   ❌ DE computation failed")
+        else:
+            print(f"   ⚠️ Unsupported comparison type: {comp_type} (only 'group' supported)")
+
+    return stats
+
+
 def _extract_de_statistics(gene_stats, mode='change'):
     """Extract statistics from scVI DE results, handling different modes."""
     if gene_stats is None or gene_stats.empty:
@@ -1209,6 +1256,7 @@ def vlnplot_scvi(adata, gene, group_by,
                     group_effects=None,          # List of group comparisons for DE
                     split_effects=None,          # List of split comparisons for DE
                     split_stats=None,            # Pre-computed split_by DE statistics - dict with group_by keys, each containing {'proba_de', 'lfc_mean'}
+                    comparisons=None,            # Simple comparison tuples: [('group', 'A', 'B')]
                     annotate_stats=None,         # Enable statistical annotations (auto if effects specified)
                     detailed_stats=False,        # Show detailed P(DE) labels vs clean stars
                     proba_de_thresholds=(0.6, 0.8, 0.95),  # Thresholds for *, **, ***
@@ -1275,6 +1323,25 @@ def vlnplot_scvi(adata, gene, group_by,
         Pre-computed split_by DE statistics. Dict with group_by categories as keys,
         each containing {'proba_de': float, 'lfc_mean': float}.
         Use compute_split_effects_within_groups() to generate this.
+    comparisons : list of tuples, optional
+        Statistical comparisons to perform using scVI differential expression.
+        Each comparison is a 3-tuple: ('group', group1, group2)
+
+        **Order matters**: group1 is the reference, group2 is the comparison.
+
+        Examples:
+            [('group', 'Control', 'Treatment')]  # Treatment vs Control
+            [('group', 'Nonlesional', 'SADBE'), # SADBE vs Nonlesional baseline
+             ('group', 'Nonlesional', 'Metal')]  # Metal vs Nonlesional baseline
+
+        **Statistics returned**:
+        - proba_de: Probability of differential expression (0-1)
+        - LFC (log fold change): log2(group2/group1)
+          * Positive LFC = group2 > group1 (upregulated)
+          * Negative LFC = group2 < group1 (downregulated)
+        - Bayes factor: Evidence strength for differential expression
+
+        Requires scvi_model parameter.
     annotate_stats : bool, optional
         Enable statistical annotations. Auto-enabled if any effects or split_stats provided.
     detailed_stats : bool, default False
@@ -1395,6 +1462,12 @@ def vlnplot_scvi(adata, gene, group_by,
 
     if split_effects and not split_by:
         raise ValueError("split_by must be specified when using split_effects")
+
+    # Process comparisons for statistical annotations
+    if comparisons and scvi_model:
+        comparison_stats = _process_comparisons(adata, gene, scvi_model, comparisons, group_by)
+    else:
+        comparison_stats = {}
 
     # Get expression data (scVI-transformed)
     if layer is not None:
