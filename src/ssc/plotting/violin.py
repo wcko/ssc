@@ -1301,7 +1301,6 @@ def vlnplot_scvi(adata, gene, group_by,
                     jitter_dot_size=12,
                     plot_mean=True,
                     show_fraction=True,
-                    show_stats=True,
                     show_legend=None,            # Smart default: False for regular, True for split
                     legend_loc='upper right',    # Legend position
                     show_group_legend=None,      # Explicit group legend control
