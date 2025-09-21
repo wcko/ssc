@@ -1374,6 +1374,57 @@ def vlnplot(adata, gene, group_by,
     return fig
 
 
+def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
+                      split_by, jitter_points, jitter_dot_size, plot_mean,
+                      mean_color, mean_size, fraction_df, fraction_threshold,
+                      show_fraction, number_fontsize, number_decimal_places):
+    """Helper function to plot a single facet or the main plot"""
+
+    # Simple violin plotting (no splits for now)
+    for i, group in enumerate(groups):
+        group_data = facet_data[facet_data['group'] == group]['expression']
+
+        if len(group_data) > 0:
+            # Create violin plot with specified colors
+            violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
+
+            # Apply custom colors to violin
+            group_color = group_colors_list[i]
+            for pc in violin_parts['bodies']:
+                pc.set_facecolor(group_color)
+                pc.set_alpha(0.7)
+                pc.set_edgecolor('black')
+                pc.set_linewidth(0.5)
+
+            # Add jitter points
+            if jitter_points:
+                x_jitter = np.random.normal(i, 0.1, size=len(group_data))
+                if isinstance(group_color, str):
+                    group_color_rgb = mcolors.to_rgb(group_color)
+                else:
+                    group_color_rgb = group_color[:3]
+                darker_color = tuple(c * 0.7 for c in group_color_rgb)
+                ax.scatter(x_jitter, group_data,
+                          c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
+
+            # Add mean expression points if enabled
+            if plot_mean:
+                group_mean = group_data.mean()
+                if ax2 is not None:
+                    ax2.scatter(i, group_mean, c=mean_color, s=mean_size, marker='o',
+                               edgecolors='white', linewidth=1, zorder=10)
+        else:
+            # No data available for this group - add placeholder
+            ax.text(i, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
+                   fontsize=14, color='gray', style='italic',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.3))
+
+    # Set basic formatting
+    ax.set_xticks(range(len(groups)))
+    ax.set_xticklabels(groups, rotation=45, ha='right')
+    ax.set_ylabel('Expression')
+
+
 def vlnplot_scvi(adata, gene, group_by,
                     title=None,
                     layer=None,
@@ -1765,9 +1816,73 @@ def vlnplot_scvi(adata, gene, group_by,
     # Storage for axis scaling
     all_means_pos_frac = []  # For expressing-cells-only means
 
-    # Create simple plot for now (no splits or facets yet)
-    fig, ax = plt.subplots(figsize=figsize)
-    ax2 = ax.twinx()  # Secondary axis for means
+    # Check if faceting is requested
+    if facet_by is not None:
+        # FACETED PLOT PATH
+        print(f"📊 Creating faceted plot by: {facet_by}")
+
+        # Add facet column to plot_data
+        if facet_by not in adata.obs.columns:
+            raise ValueError(f"Facet column '{facet_by}' not found in adata.obs")
+        plot_data['facet_by'] = adata.obs[facet_by].values
+
+        # Get facet categories in order
+        facet_categories = sorted(plot_data['facet_by'].unique())
+        n_facets = len(facet_categories)
+        print(f"📋 Facet categories: {facet_categories}")
+
+        # Calculate grid dimensions
+        if facet_ncols is not None:
+            n_cols = min(facet_ncols, n_facets)
+            n_rows = (n_facets + n_cols - 1) // n_cols  # Ceiling division
+        else:
+            n_cols = n_facets  # Default: horizontal layout
+            n_rows = 1
+
+        # Create faceted figure
+        facet_figsize = facet_figsize if facet_figsize is not None else (4 * n_cols, 4 * n_rows)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=facet_figsize, squeeze=False)
+
+        # Plot each facet
+        for idx, facet_cat in enumerate(facet_categories):
+            row = idx // n_cols
+            col = idx % n_cols
+            ax = axes[row, col]
+            ax2 = ax.twinx()
+
+            # Subset data for this facet
+            facet_data = plot_data[plot_data['facet_by'] == facet_cat].copy()
+
+            # Set subplot title
+            ax.set_title(f"{facet_cat}", fontsize=subtitle_fontsize)
+
+            # Reuse the existing single plot logic for this subplot
+            _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
+                              split_by, jitter_points, jitter_dot_size, plot_mean,
+                              mean_color, mean_size, fraction_df, fraction_threshold,
+                              show_fraction, number_fontsize, number_decimal_places)
+
+        # Hide empty subplots
+        for idx in range(n_facets, n_rows * n_cols):
+            row = idx // n_cols
+            col = idx % n_cols
+            axes[row, col].axis('off')
+
+        # Add overall title
+        if title is not None:
+            fig.suptitle(title, fontsize=title_fontsize)
+        elif gene:
+            fig.suptitle(f'{gene} Expression (scVI)', fontsize=title_fontsize)
+
+        plt.tight_layout()
+        print(f"✅ Faceted vlnplot_scvi completed for {gene}")
+        print(f"📊 Shows: {n_facets} facets by {facet_by}")
+        return fig
+
+    else:
+        # SINGLE PLOT PATH (original functionality preserved)
+        fig, ax = plt.subplots(figsize=figsize)
+        ax2 = ax.twinx()  # Secondary axis for means
 
     # Create violin plots (with or without splits)
     if split_by is None:
