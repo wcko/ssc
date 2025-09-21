@@ -1795,7 +1795,21 @@ def vlnplot_scvi(adata, gene, group_by,
     show_fraction : bool, default True
         Show cell counts and fraction expressing below plot
     show_legend : bool, optional
-        Show legend. Auto-determined based on split_by if not specified
+        Smart automatic legend display:
+        - When split_by is used: shows split legend (colors for split categories)
+        - When split_by is None: shows group legend (colors for x-axis groups)
+        - None (default): auto-determines based on split_by presence
+        - True/False: explicitly enable/disable automatic legend behavior
+    show_group_legend : bool, optional
+        Explicit control for group legend display (x-axis group colors):
+        - None (default): follows show_legend automatic behavior
+        - True: force display group legend regardless of split_by
+        - False: never show group legend
+        Works independently of show_legend for split plots.
+    group_legend_loc : str, default 'below'
+        Group legend position. Same options as legend_loc.
+    group_legend_fontsize : int, optional
+        Group legend font size. Inherits from legend_fontsize if not specified.
     legend_loc : str, default 'upper right'
         Legend position. Standard matplotlib locations: 'upper right', 'upper left',
         'lower left', 'lower right', 'right', 'center left', 'center right',
@@ -2061,8 +2075,11 @@ def vlnplot_scvi(adata, gene, group_by,
             col = idx % n_cols
             axes[row, col].axis('off')
 
+        # Determine which legends to show for faceted plots (same logic as single plots)
+        show_split_legend = show_legend and split_by is not None
+
         # Add legend for split violins in faceted plots
-        if show_legend and split_by is not None and splits is not None:
+        if show_split_legend and splits is not None:
             # Create legend elements for splits using the last subplot for positioning
             last_ax = axes.flat[-1] if len(axes.flat) > 0 else axes[0, 0]
 
@@ -2097,6 +2114,38 @@ def vlnplot_scvi(adata, gene, group_by,
                 split_legend = last_ax.legend(handles=split_legend_elements, loc=legend_loc,
                                            fontsize=legend_fontsize,
                                            title=split_by, title_fontsize=legend_fontsize)
+
+        # Add group legend for faceted plots (same logic as single plots)
+        show_group_legend_flag = show_group_legend or (show_legend and split_by is None)
+        if show_group_legend_flag:
+            # Create legend elements for groups using the last subplot for positioning
+            last_ax = axes.flat[-1] if len(axes.flat) > 0 else axes[0, 0]
+
+            group_legend_elements = []
+            for i, group in enumerate(groups):
+                group_color = group_colors_list[i]
+                group_legend_elements.append(plt.Rectangle((0,0), 1, 1,
+                                                         facecolor=group_color, alpha=0.7,
+                                                         edgecolor='black', linewidth=0.5,
+                                                         label=group))
+
+            # Handle custom legend positions for group legends in faceted plots
+            if group_legend_loc == 'below':
+                # Place below the entire figure
+                group_legend = fig.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
+                                       title=group_by, title_fontsize=group_legend_fontsize,
+                                       bbox_to_anchor=(0.5, 0.02), loc='lower center',
+                                       ncol=len(groups))
+            elif group_legend_loc == 'right':
+                # Place to the right of the entire figure
+                group_legend = fig.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
+                                       title=group_by, title_fontsize=group_legend_fontsize,
+                                       bbox_to_anchor=(0.98, 0.5), loc='center left')
+            else:
+                # Place in specified location on the last subplot
+                group_legend = last_ax.legend(handles=group_legend_elements, loc=group_legend_loc,
+                                           fontsize=group_legend_fontsize,
+                                           title=group_by, title_fontsize=group_legend_fontsize)
 
         # Apply y-axis scaling for faceted plots
         # Handle free_y scaling for expression data (left y-axis)
