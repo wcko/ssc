@@ -1132,7 +1132,7 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
 
     # Apply axis tick font sizes to all subplots
     ax.tick_params(axis='y', labelsize=axis_tick_fontsize)
-    ax.tick_params(axis='x', labelsize=axis_tick_fontsize)
+    ax.tick_params(axis='x', labelsize=xlabel_fontsize)
 
     # Add statistical annotations for faceted plots
     if comparison_stats:
@@ -1266,7 +1266,7 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
 
 
 def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
-                               split_by, split_colors, splits, jitter_points, jitter_dot_size,
+                               split_by, split_colors_list, splits, jitter_points, jitter_dot_size,
                                plot_mean, mean_color, mean_size, show_fraction,
                                expression_threshold, number_fontsize, number_decimal_places,
                                show_xlabel, xlabel_rotation, xlabel_ha, xlabel_fontsize,
@@ -1290,7 +1290,7 @@ def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
         Colors for each group
     split_by : str or None
         Column name for split violins
-    split_colors : list or None
+    split_colors_list : list or None
         Colors for split categories
     splits : list or None
         Ordered list of split categories
@@ -1409,23 +1409,28 @@ def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
                         if len(expressing_cells) > 0:
                             mean_pos_frac = expressing_cells.mean()
                             ax2.scatter(i, mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size,
-                                      marker='s', edgecolors='white', linewidth=1, zorder=11)
+                                      marker='o', edgecolors='white', linewidth=1, zorder=11)
 
-                # Add fraction label
+                # Add fraction label in vlnplot_scvi format
                 if show_fraction:
                     expressing_cells = group_data[group_data > expression_threshold]
-                    fraction = len(expressing_cells) / len(group_data) if len(group_data) > 0 else 0
+                    total_cells = len(group_data)
+                    expressing_count = len(expressing_cells)
+                    fraction = expressing_count / total_cells if total_cells > 0 else 0
 
-                    # Format fraction text
-                    if number_decimal_places == 0:
-                        fraction_text = f"{len(expressing_cells)}\n{fraction:.0%}"
-                    else:
-                        fraction_text = f"{len(expressing_cells)}\n{fraction:.{number_decimal_places}%}"
-
-                    # Position text at bottom
-                    y_min = ax.get_ylim()[0]
-                    ax.text(i, y_min - 0.05 * (ax.get_ylim()[1] - y_min), fraction_text,
-                           ha='center', va='top', fontsize=number_fontsize)
+                    # Total cells - top row
+                    ax.text(i, -0.08, f'{total_cells}', ha='center', va='top',
+                            fontsize=number_fontsize, weight='bold',
+                            transform=ax.get_xaxis_transform())
+                    # Expressing cells - middle row
+                    ax.text(i, -0.12, f'{expressing_count}', ha='center', va='top',
+                            fontsize=number_fontsize-1,
+                            transform=ax.get_xaxis_transform())
+                    # Fraction expressing as decimal - bottom row
+                    frac_text = f'{fraction:.{number_decimal_places}f}'
+                    ax.text(i, -0.16, frac_text, ha='center', va='top',
+                            fontsize=number_fontsize-1,
+                            transform=ax.get_xaxis_transform())
 
             else:
                 # Draw empty placeholder
@@ -1450,13 +1455,13 @@ def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
                 split_data = group_data[group_data['split'] == split]['expression']
                 x_pos = start_pos + j * split_width
 
+                # Define split color for both data and no-data cases
+                split_color = split_colors_list[j % len(split_colors_list)] if split_colors_list else group_colors_list[i % len(group_colors_list)]
+
                 if len(split_data) > 0:
                     # Create split violin
                     violin_parts = ax.violinplot([split_data], positions=[x_pos], widths=split_width,
                                                showmeans=False, showextrema=False)
-
-                    # Apply split colors
-                    split_color = split_colors[j % len(split_colors)] if split_colors else group_colors_list[i % len(group_colors_list)]
                     for pc in violin_parts['bodies']:
                         pc.set_facecolor(split_color)
                         pc.set_alpha(0.7)
@@ -1480,6 +1485,35 @@ def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
                         mean_expr = split_data.mean()
                         ax2.scatter(x_pos, mean_expr, c=mean_color, s=mean_size, marker='o',
                                   edgecolors='white', linewidth=1, zorder=10)
+
+                        # Add expressing-cells-only mean for splits
+                        if plot_mean_pos_frac:
+                            expressing_cells = split_data[split_data > expression_threshold]
+                            if len(expressing_cells) > 0:
+                                mean_pos_frac = expressing_cells.mean()
+                                ax2.scatter(x_pos, mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size,
+                                          marker='o', edgecolors='white', linewidth=1, zorder=11)
+
+                    # Add fraction labels for splits in vlnplot_scvi format
+                    if show_fraction:
+                        expressing_cells = split_data[split_data > expression_threshold]
+                        total_cells = len(split_data)
+                        expressing_count = len(expressing_cells)
+                        fraction = expressing_count / total_cells if total_cells > 0 else 0
+
+                        # Total cells - top row
+                        ax.text(x_pos, -0.08, f'{total_cells}', ha='center', va='top',
+                                fontsize=number_fontsize, weight='bold',
+                                transform=ax.get_xaxis_transform())
+                        # Expressing cells - middle row
+                        ax.text(x_pos, -0.12, f'{expressing_count}', ha='center', va='top',
+                                fontsize=number_fontsize-1,
+                                transform=ax.get_xaxis_transform())
+                        # Fraction expressing as decimal - bottom row
+                        frac_text = f'{fraction:.{number_decimal_places}f}'
+                        ax.text(x_pos, -0.16, frac_text, ha='center', va='top',
+                                fontsize=number_fontsize-1,
+                                transform=ax.get_xaxis_transform())
 
                 else:
                     # Empty split placeholder
@@ -1523,7 +1557,15 @@ def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
         else:
             labels = groups
         ax.set_xticks(range(len(groups)))
-        ax.set_xticklabels(labels, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+        # Adjust x-label position based on whether fractions are shown
+        if show_fraction:
+            # Move x-labels down slightly when fractions are displayed
+            ax.set_xticklabels(labels, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+            # Use tick_params to adjust label position
+            ax.tick_params(axis='x', pad=8)  # Moderate padding when fractions are shown
+        else:
+            ax.set_xticklabels(labels, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+            ax.tick_params(axis='x', pad=3)   # Default padding when no fractions
     else:
         ax.set_xticks([])
 
@@ -1531,24 +1573,31 @@ def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
     if is_leftmost_subplot:
         layer_text = f" ({layer})" if layer else ""
         ax.set_ylabel(f'{gene} Expression{layer_text}', fontsize=ylabel_fontsize)
-        if ax2 is not None and plot_mean:
-            ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize)
 
-    # Set tick font sizes
-    ax.tick_params(axis='both', which='major', labelsize=axis_tick_fontsize)
+    # Set y2-axis label on rightmost subplot
+    if is_rightmost_subplot and ax2 is not None and plot_mean:
+        ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize, color=mean_color)
+        ax2.tick_params(axis='y', colors=mean_color)
+
+    # Set tick font sizes and colors separately for x and y axes
+    ax.tick_params(axis='y', which='major', labelsize=axis_tick_fontsize)  # Y-axis ticks
+    ax.tick_params(axis='x', which='major', labelsize=xlabel_fontsize)     # X-axis labels keep their size
     if ax2 is not None:
-        ax2.tick_params(axis='both', which='major', labelsize=axis_tick_fontsize)
+        ax2.tick_params(axis='y', which='major', labelsize=axis_tick_fontsize)
+        if plot_mean:
+            # Set y2 axis color to match mean color
+            ax2.tick_params(axis='y', colors=mean_color)
+            ax2.yaxis.label.set_color(mean_color)
 
-    # Hide right y-axis if not rightmost subplot
+    # Hide right y-axis label (but keep ticks) if not rightmost subplot
     if ax2 is not None and not is_rightmost_subplot:
         ax2.set_ylabel('')
-        ax2.tick_params(right=False, labelright=False)
 
 
 def vlnplot(adata, gene, group_by,
            title=None,
            layer=None,
-           expression_threshold=0.1,
+           expression_threshold=0.0,
            split_by=None,
            facet_by=None,
            group_order=None,
@@ -1596,8 +1645,26 @@ def vlnplot(adata, gene, group_by,
     """
     Create violin plots for single-cell RNA sequencing data with standard statistical analysis.
 
-    This function creates violin plots optimized for standard single-cell data types
-    (raw counts, CPM, log-normalized) with built-in statistical testing capabilities.
+    This function creates publication-ready violin plots optimized for standard single-cell
+    data types (raw counts, CPM, log-normalized) with comprehensive visualization features:
+
+    ✅ FULLY IMPLEMENTED FEATURES:
+    • Split violins for treatment comparisons (split_by)
+    • Multi-panel faceting by categories (facet_by)
+    • Flexible y-axis scaling (free_y, free_mean_y)
+    • Manual y-axis limits (ylim)
+    • Dual legends (group colors + split colors)
+    • Comprehensive font size controls
+    • Cell fraction display (total, expressing, %)
+    • Mean expression visualization with dual y-axes
+    • Jitter point overlay
+    • Custom styling and positioning
+
+    ⚠️  STATISTICAL ANNOTATIONS NOT YET IMPLEMENTED:
+    Statistical testing is performed (t-test, Wilcoxon, Mann-Whitney) but significance
+    annotations (*, **, ***) are not yet drawn on plots. For statistical comparisons
+    with visual annotations, use vlnplot_scvi() which includes scVI-based differential
+    expression analysis with full annotation support.
 
     Parameters
     ----------
@@ -1611,7 +1678,7 @@ def vlnplot(adata, gene, group_by,
         Plot title. If None, uses gene name
     layer : str, optional
         Layer to use for expression data. If None, uses adata.X
-    expression_threshold : float, default 0.1
+    expression_threshold : float, default 0.0
         Threshold for calculating % expressing cells
     split_by : str, optional
         Column in adata.obs for split violins (e.g., treatment conditions)
@@ -1714,18 +1781,32 @@ def vlnplot(adata, gene, group_by,
 
     Examples
     --------
-    Basic violin plot:
-    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type')
+    Basic violin plot with group legend:
+    >>> fig = vlnplot(adata, 'GNLY', 'condition',
+    ...               group_colors={'Control': 'blue', 'Treatment': 'red'},
+    ...               show_group_legend=True, group_legend_loc='below')
 
-    With statistical comparisons:
-    >>> comparisons = [('group', 'TypeA', 'TypeB'), ('group', 'TypeA', 'TypeC')]
-    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type', comparisons=comparisons)
+    Split violin plot for treatment comparisons:
+    >>> fig = vlnplot(adata, 'GNLY', 'condition', split_by='treatment',
+    ...               split_colors={'pre': 'red', 'post': 'blue'},
+    ...               show_legend=True, legend_loc='upper right')
 
-    Split violin plot:
-    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type', split_by='treatment')
+    Multi-panel faceted plot with custom styling:
+    >>> fig = vlnplot(adata, 'GNLY', 'condition', facet_by='subject',
+    ...               facet_ncols=2, free_y=True,
+    ...               xlabel_fontsize=12, ylabel_fontsize=14,
+    ...               show_fraction=True, plot_mean_pos_frac=True)
 
-    Faceted plot:
-    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type', facet_by='tissue')
+    Combined split + facet plot (like your current example):
+    >>> fig = vlnplot(adata, 'GNLY', 'condition',
+    ...               split_by='treatment', facet_by='subject',
+    ...               group_labels={'Nonlesional':'NL', 'SADBE':'S'},
+    ...               ylim=(0, 1000), figsize=(14,14))
+
+    Raw count data with appropriate threshold:
+    >>> fig = vlnplot(adata, 'GNLY', 'condition', layer='raw',
+    ...               expression_threshold=0.0,  # Raw counts
+    ...               jitter_points=True, mean_color='blue')
     """
     import math
     import pandas as pd
@@ -1882,7 +1963,11 @@ def vlnplot(adata, gene, group_by,
 
         # Determine subplot positions for axis labeling
         is_leftmost = (col == 0) if is_faceted else True
-        is_rightmost = (col == (ax_pairs[0][3] if ax_pairs else 0)) if is_faceted else True
+        if is_faceted:
+            # For faceted plots, rightmost is the last column OR the last subplot in the grid
+            is_rightmost = (col == facet_cols - 1) or (idx == len(facets) - 1)
+        else:
+            is_rightmost = True
 
         # Call plotting function
         _plot_single_facet_standard(
@@ -1910,8 +1995,17 @@ def vlnplot(adata, gene, group_by,
         fig.suptitle(main_title, fontsize=title_fontsize)
 
     # Add legends if needed
-    if split_by is not None and (show_legend is True or (show_legend is None and split_by is not None)):
-        # Create split legend
+    # Set default group legend fontsize
+    if group_legend_fontsize is None:
+        group_legend_fontsize = legend_fontsize
+
+    # Determine which legends to show
+    show_split_legend = show_legend and split_by is not None
+    show_group_legend_flag = show_group_legend or (show_legend and split_by is None)
+
+    # Create split legend if requested
+    if show_split_legend:
+        # Create legend elements for splits
         legend_elements = []
         for i, split in enumerate(splits):
             color = split_colors_list[i % len(split_colors_list)]
@@ -1920,6 +2014,76 @@ def vlnplot(adata, gene, group_by,
 
         fig.legend(handles=legend_elements, loc=legend_loc, fontsize=legend_fontsize,
                   title=split_by, title_fontsize=legend_fontsize)
+
+    # Create group legend if requested
+    if show_group_legend_flag:
+        # Create legend elements for groups
+        group_legend_elements = []
+        for i, group in enumerate(groups):
+            group_color = group_colors_list[i]
+            group_legend_elements.append(plt.Rectangle((0,0), 1, 1,
+                                                      facecolor=group_color, alpha=0.7,
+                                                      edgecolor='black', linewidth=0.5,
+                                                      label=group))
+
+        # Position group legend
+        if group_legend_loc == 'below':
+            # Place below the entire figure
+            group_legend = fig.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
+                                   title=group_by, title_fontsize=group_legend_fontsize,
+                                   bbox_to_anchor=(0.5, 0.02), loc='lower center',
+                                   ncol=len(groups))
+        elif group_legend_loc == 'right':
+            # Place to the right of the entire figure
+            group_legend = fig.legend(handles=group_legend_elements, fontsize=group_legend_fontsize,
+                                   title=group_by, title_fontsize=group_legend_fontsize,
+                                   bbox_to_anchor=(0.98, 0.5), loc='center left')
+        else:
+            # Use the first axes for positioning
+            first_ax = ax_pairs[0][0] if ax_pairs else None
+            if first_ax:
+                group_legend = first_ax.legend(handles=group_legend_elements, loc=group_legend_loc,
+                                             fontsize=group_legend_fontsize,
+                                             title=group_by, title_fontsize=group_legend_fontsize)
+
+    # Apply y-axis scaling for faceted plots
+    if is_faceted:
+        # Handle free_y scaling for expression data (left y-axis)
+        if not free_y:
+            # Calculate global y-limits across all facets
+            all_y_mins, all_y_maxs = [], []
+            for ax1, ax2, row, col in ax_pairs:
+                y_min, y_max = ax1.get_ylim()
+                all_y_mins.append(y_min)
+                all_y_maxs.append(y_max)
+            if all_y_mins and all_y_maxs:
+                global_y_min = min(all_y_mins)
+                global_y_max = max(all_y_maxs)
+                # Apply global limits to all facets
+                for ax1, ax2, row, col in ax_pairs:
+                    ax1.set_ylim(global_y_min, global_y_max)
+
+        # Handle free_mean_y scaling for mean expression data (right y-axis)
+        if not free_mean_y and plot_mean:
+            # Calculate global mean y-limits across all facets
+            all_mean_y_mins, all_mean_y_maxs = [], []
+            for ax1, ax2, row, col in ax_pairs:
+                if ax2 is not None:
+                    mean_y_min, mean_y_max = ax2.get_ylim()
+                    all_mean_y_mins.append(mean_y_min)
+                    all_mean_y_maxs.append(mean_y_max)
+            if all_mean_y_mins and all_mean_y_maxs:
+                global_mean_y_min = min(all_mean_y_mins)
+                global_mean_y_max = max(all_mean_y_maxs)
+                # Apply global limits to all mean axes
+                for ax1, ax2, row, col in ax_pairs:
+                    if ax2 is not None:
+                        ax2.set_ylim(global_mean_y_min, global_mean_y_max)
+
+    # Apply ylim override if specified (only affects expression/left y-axis)
+    if ylim is not None:
+        for ax1, ax2, row, col in ax_pairs:
+            ax1.set_ylim(ylim)
 
     plt.tight_layout()
 
@@ -2970,7 +3134,7 @@ def vlnplot_scvi(adata, gene, group_by,
 
     # Apply axis tick font sizes
     ax.tick_params(axis='y', labelsize=axis_tick_fontsize)
-    ax.tick_params(axis='x', labelsize=axis_tick_fontsize)
+    ax.tick_params(axis='x', labelsize=xlabel_fontsize)
 
     if plot_mean:
         ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize, color=mean_color)
