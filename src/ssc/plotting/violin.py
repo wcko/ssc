@@ -396,6 +396,211 @@ def _add_statistical_annotation(ax, x1, x2, y_position, gene_stats, detailed_sta
 
 
 
+def _get_star_annotation_standard(p_value, thresholds=(0.05, 0.01, 0.001)):
+    """Convert p-value to star annotation for standard statistical tests.
+
+    Parameters
+    ----------
+    p_value : float
+        P-value from statistical test (0-1 scale)
+    thresholds : tuple
+        P-value thresholds for significance levels (p<0.05, p<0.01, p<0.001)
+
+    Returns
+    -------
+    str
+        Star annotation: '***', '**', '*', or 'ns'
+    """
+    if p_value < thresholds[2]:  # p < 0.001
+        return "***"
+    elif p_value < thresholds[1]:  # p < 0.01
+        return "**"
+    elif p_value < thresholds[0]:  # p < 0.05
+        return "*"
+    else:
+        return "ns"
+
+
+def _compute_standard_statistics(group1_data, group2_data, method='ttest'):
+    """Compute standard statistical tests between two groups.
+
+    Parameters
+    ----------
+    group1_data : array-like
+        Expression data for group 1
+    group2_data : array-like
+        Expression data for group 2
+    method : str
+        Statistical test method: 'ttest', 'wilcoxon', 'mannwhitney'
+
+    Returns
+    -------
+    dict
+        Statistical results with keys: pvalue, statistic, logfc, method
+    """
+    import numpy as np
+    from scipy import stats
+
+    # Convert to numpy arrays and remove NaN values
+    group1 = np.array(group1_data).flatten()
+    group2 = np.array(group2_data).flatten()
+    group1 = group1[~np.isnan(group1)]
+    group2 = group2[~np.isnan(group2)]
+
+    if len(group1) == 0 or len(group2) == 0:
+        return {'pvalue': 1.0, 'statistic': 0.0, 'logfc': 0.0, 'method': method}
+
+    # Calculate log fold change (log2 of mean ratios)
+    mean1 = np.mean(group1)
+    mean2 = np.mean(group2)
+
+    # Add small pseudocount to avoid log(0)
+    pseudocount = 1e-6
+    logfc = np.log2((mean2 + pseudocount) / (mean1 + pseudocount))
+
+    # Perform statistical test
+    try:
+        if method == 'ttest':
+            statistic, pvalue = stats.ttest_ind(group1, group2, equal_var=False)
+        elif method == 'wilcoxon':
+            # Use Mann-Whitney U test (equivalent to Wilcoxon rank-sum for independent samples)
+            statistic, pvalue = stats.mannwhitneyu(group1, group2, alternative='two-sided')
+        elif method == 'mannwhitney':
+            statistic, pvalue = stats.mannwhitneyu(group1, group2, alternative='two-sided')
+        else:
+            raise ValueError(f"Unknown statistical method: {method}")
+
+    except Exception as e:
+        print(f"⚠️  Statistical test failed: {e}")
+        return {'pvalue': 1.0, 'statistic': 0.0, 'logfc': logfc, 'method': method}
+
+    return {
+        'pvalue': float(pvalue) if not np.isnan(pvalue) else 1.0,
+        'statistic': float(statistic) if not np.isnan(statistic) else 0.0,
+        'logfc': float(logfc) if not np.isnan(logfc) else 0.0,
+        'method': method
+    }
+
+
+def _format_statistical_text(stats_dict, display_options, detailed_stats=False):
+    """Format statistical results for display.
+
+    Parameters
+    ----------
+    stats_dict : dict
+        Statistical results from _compute_standard_statistics
+    display_options : dict
+        Display options: show_pvalue, show_logfc, show_statistic, show_stars_only
+    detailed_stats : bool
+        Whether to show detailed statistics or just stars
+
+    Returns
+    -------
+    str
+        Formatted text for annotation
+    """
+    if stats_dict is None:
+        return ""
+
+    pvalue = stats_dict.get('pvalue', 1.0)
+    statistic = stats_dict.get('statistic', 0.0)
+    logfc = stats_dict.get('logfc', 0.0)
+    method = stats_dict.get('method', 'unknown')
+
+    # Get star annotation
+    stars = _get_star_annotation_standard(pvalue)
+
+    # If only showing stars
+    if display_options.get('show_stars_only', False):
+        return stars if stars != 'ns' else ('ns' if display_options.get('show_ns', False) else '')
+
+    # Build annotation text
+    parts = []
+
+    if detailed_stats:
+        # Detailed format: "t=2.45, p=0.023, logFC=1.23"
+        if display_options.get('show_statistic', True):
+            stat_name = 't' if method == 'ttest' else 'U'
+            parts.append(f"{stat_name}={statistic:.2f}")
+        if display_options.get('show_pvalue', True):
+            if pvalue < 0.001:
+                parts.append("p<0.001")
+            else:
+                parts.append(f"p={pvalue:.3f}")
+        if display_options.get('show_logfc', True):
+            parts.append(f"logFC={logfc:.2f}")
+    else:
+        # Simple format based on preferences
+        if display_options.get('show_pvalue', False):
+            if pvalue < 0.001:
+                parts.append("p<0.001")
+            elif pvalue < 0.01:
+                parts.append("p<0.01")
+            elif pvalue < 0.05:
+                parts.append("p<0.05")
+            else:
+                parts.append(f"p={pvalue:.3f}" if display_options.get('show_ns', False) else "")
+        else:
+            # Just show stars
+            if stars != 'ns' or display_options.get('show_ns', False):
+                parts.append(stars)
+
+    return ', '.join(filter(None, parts))
+
+
+def _add_statistical_annotation_standard(ax, x1, x2, y_position, stats_dict,
+                                        display_options=None, detailed_stats=False,
+                                        p_thresholds=(0.05, 0.01, 0.001)):
+    """Add standard statistical annotation between two x positions.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes to add annotation to
+    x1, x2 : float
+        X positions for comparison line
+    y_position : float
+        Y position for annotation
+    stats_dict : dict
+        Statistical results from _compute_standard_statistics
+    display_options : dict
+        Display preferences for annotation text
+    detailed_stats : bool
+        Whether to show detailed statistics
+    p_thresholds : tuple
+        P-value thresholds for significance stars
+    """
+    if stats_dict is None or not stats_dict:
+        return
+
+    # Default display options
+    if display_options is None:
+        display_options = {
+            'show_pvalue': False,
+            'show_logfc': False,
+            'show_statistic': False,
+            'show_stars_only': True,
+            'show_ns': False
+        }
+
+    # Format annotation text
+    annotation = _format_statistical_text(stats_dict, display_options, detailed_stats)
+
+    if not annotation:
+        return  # Nothing to show
+
+    # Draw horizontal line with brackets
+    line_height = 0.02 * (ax.get_ylim()[1] - ax.get_ylim()[0])
+    ax.plot([x1, x2], [y_position, y_position], 'k-', linewidth=1)
+    ax.plot([x1, x1], [y_position - line_height/2, y_position + line_height/2], 'k-', linewidth=1)
+    ax.plot([x2, x2], [y_position - line_height/2, y_position + line_height/2], 'k-', linewidth=1)
+
+    # Add annotation text
+    x_center = (x1 + x2) / 2
+    ax.text(x_center, y_position + line_height, annotation, ha='center', va='bottom',
+            fontsize=12, fontweight='bold')
+
+
 def _validate_and_filter_comparisons(comparisons, adata, group_by, split_by=None):
     """
     Check which comparisons are valid given available data.
@@ -1058,6 +1263,667 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
             max_annotation_height = annotation_height_start + comparison_annotation_count * annotation_height_step
             new_y_max = max_annotation_height + y_max * 0.1
             ax.set_ylim(0, new_y_max)
+
+
+def _plot_single_facet_standard(ax, ax2, facet_data, groups, group_colors_list,
+                               split_by, split_colors, splits, jitter_points, jitter_dot_size,
+                               plot_mean, mean_color, mean_size, show_fraction,
+                               expression_threshold, number_fontsize, number_decimal_places,
+                               show_xlabel, xlabel_rotation, xlabel_ha, xlabel_fontsize,
+                               ylabel_fontsize, ylabel_mean_fontsize, axis_tick_fontsize,
+                               plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
+                               group_labels, gene, layer, is_leftmost_subplot, is_rightmost_subplot,
+                               comparison_stats=None, detailed_stats=False, stat_method='ttest',
+                               stat_display_options=None, p_thresholds=(0.05, 0.01, 0.001)):
+    """
+    Plot a single facet with standard statistical framework (no scVI dependencies).
+
+    Parameters
+    ----------
+    ax, ax2 : matplotlib.axes.Axes
+        Primary and secondary (mean) axes
+    facet_data : pd.DataFrame
+        Data subset for this facet with columns: 'group', 'expression', optionally 'split'
+    groups : list
+        Ordered list of groups to plot
+    group_colors_list : list
+        Colors for each group
+    split_by : str or None
+        Column name for split violins
+    split_colors : list or None
+        Colors for split categories
+    splits : list or None
+        Ordered list of split categories
+    jitter_points : bool
+        Whether to add jitter points
+    jitter_dot_size : float
+        Size of jitter points
+    plot_mean : bool
+        Whether to plot mean dots
+    mean_color : str
+        Color for mean dots
+    mean_size : float
+        Size of mean dots
+    show_fraction : bool
+        Whether to show % expressing fractions
+    expression_threshold : float
+        Threshold for calculating % expressing
+    number_fontsize : float
+        Font size for numbers
+    number_decimal_places : int
+        Decimal places for fractions
+    show_xlabel : bool
+        Whether to show x-axis labels
+    xlabel_rotation : float
+        X-axis label rotation
+    xlabel_ha : str
+        X-axis label horizontal alignment
+    xlabel_fontsize : float
+        X-axis label font size
+    ylabel_fontsize : float
+        Y-axis label font size
+    ylabel_mean_fontsize : float
+        Mean y-axis label font size
+    axis_tick_fontsize : float
+        Axis tick font size
+    plot_mean_pos_frac : bool
+        Whether to plot expressing-cells-only means
+    mean_pos_frac_color : str
+        Color for expressing-cells-only means
+    mean_pos_frac_size : float
+        Size for expressing-cells-only means
+    group_labels : dict or None
+        Custom labels for groups
+    gene : str
+        Gene name
+    layer : str or None
+        Layer name for title
+    is_leftmost_subplot : bool
+        Whether this is the leftmost subplot
+    is_rightmost_subplot : bool
+        Whether this is the rightmost subplot
+    comparison_stats : list or None
+        Statistical comparisons to annotate
+    detailed_stats : bool
+        Whether to show detailed statistical labels
+    stat_method : str
+        Statistical method ('ttest', 'wilcoxon', 'mannwhitney')
+    stat_display_options : dict or None
+        Options for statistical display
+    p_thresholds : tuple
+        P-value thresholds for significance
+    """
+    import numpy as np
+
+    # Default statistical display options
+    if stat_display_options is None:
+        stat_display_options = {
+            'show_pvalue': False,
+            'show_logfc': False,
+            'show_statistic': False,
+            'show_stars_only': True,
+            'show_ns': False
+        }
+
+    # Create violin plots (with or without splits)
+    if split_by is None or splits is None:
+        # Regular violin plots
+        for i, group in enumerate(groups):
+            group_data = facet_data[facet_data['group'] == group]['expression']
+
+            if len(group_data) > 0:
+                # Create violin plot
+                violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6,
+                                           showmeans=False, showextrema=False)
+
+                # Apply colors
+                group_color = group_colors_list[i % len(group_colors_list)]
+                for pc in violin_parts['bodies']:
+                    pc.set_facecolor(group_color)
+                    pc.set_alpha(0.7)
+                    pc.set_edgecolor('black')
+                    pc.set_linewidth(0.5)
+
+                # Add jitter points
+                if jitter_points:
+                    x_jitter = np.random.normal(i, 0.08, size=len(group_data))
+                    # Make jitter points darker
+                    if isinstance(group_color, str):
+                        import matplotlib.colors as mcolors
+                        group_color_rgb = mcolors.to_rgb(group_color)
+                    else:
+                        group_color_rgb = group_color[:3]
+                    darker_color = tuple(c * 0.7 for c in group_color_rgb)
+                    ax.scatter(x_jitter, group_data, c=[darker_color], s=jitter_dot_size,
+                             alpha=0.8, edgecolors='none')
+
+                # Add mean expression dot
+                if plot_mean and ax2 is not None:
+                    mean_expr = group_data.mean()
+                    ax2.scatter(i, mean_expr, c=mean_color, s=mean_size, marker='o',
+                              edgecolors='white', linewidth=1, zorder=10)
+
+                    # Add expressing-cells-only mean
+                    if plot_mean_pos_frac:
+                        expressing_cells = group_data[group_data > expression_threshold]
+                        if len(expressing_cells) > 0:
+                            mean_pos_frac = expressing_cells.mean()
+                            ax2.scatter(i, mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size,
+                                      marker='s', edgecolors='white', linewidth=1, zorder=11)
+
+                # Add fraction label
+                if show_fraction:
+                    expressing_cells = group_data[group_data > expression_threshold]
+                    fraction = len(expressing_cells) / len(group_data) if len(group_data) > 0 else 0
+
+                    # Format fraction text
+                    if number_decimal_places == 0:
+                        fraction_text = f"{len(expressing_cells)}\n{fraction:.0%}"
+                    else:
+                        fraction_text = f"{len(expressing_cells)}\n{fraction:.{number_decimal_places}%}"
+
+                    # Position text at bottom
+                    y_min = ax.get_ylim()[0]
+                    ax.text(i, y_min - 0.05 * (ax.get_ylim()[1] - y_min), fraction_text,
+                           ha='center', va='top', fontsize=number_fontsize)
+
+            else:
+                # Draw empty placeholder
+                _draw_empty_placeholder_clean(ax, i, text="No data")
+
+    else:
+        # Split violin plots
+        for i, group in enumerate(groups):
+            group_data = facet_data[facet_data['group'] == group]
+
+            if len(group_data) == 0:
+                _draw_empty_placeholder_clean(ax, i, text="No data")
+                continue
+
+            # Calculate positions for split violins
+            n_splits = len(splits)
+            violin_width = 0.6
+            split_width = violin_width / n_splits
+            start_pos = i - violin_width/2 + split_width/2
+
+            for j, split in enumerate(splits):
+                split_data = group_data[group_data['split'] == split]['expression']
+                x_pos = start_pos + j * split_width
+
+                if len(split_data) > 0:
+                    # Create split violin
+                    violin_parts = ax.violinplot([split_data], positions=[x_pos], widths=split_width,
+                                               showmeans=False, showextrema=False)
+
+                    # Apply split colors
+                    split_color = split_colors[j % len(split_colors)] if split_colors else group_colors_list[i % len(group_colors_list)]
+                    for pc in violin_parts['bodies']:
+                        pc.set_facecolor(split_color)
+                        pc.set_alpha(0.7)
+                        pc.set_edgecolor('black')
+                        pc.set_linewidth(0.5)
+
+                    # Add jitter points for splits
+                    if jitter_points:
+                        x_jitter = np.random.normal(x_pos, split_width * 0.1, size=len(split_data))
+                        if isinstance(split_color, str):
+                            import matplotlib.colors as mcolors
+                            split_color_rgb = mcolors.to_rgb(split_color)
+                        else:
+                            split_color_rgb = split_color[:3]
+                        darker_color = tuple(c * 0.7 for c in split_color_rgb)
+                        ax.scatter(x_jitter, split_data, c=[darker_color], s=jitter_dot_size,
+                                 alpha=0.8, edgecolors='none')
+
+                    # Add mean for splits
+                    if plot_mean and ax2 is not None:
+                        mean_expr = split_data.mean()
+                        ax2.scatter(x_pos, mean_expr, c=mean_color, s=mean_size, marker='o',
+                                  edgecolors='white', linewidth=1, zorder=10)
+
+                else:
+                    # Empty split placeholder
+                    _draw_empty_split_placeholder(ax, x_pos, split_width, split_color)
+
+    # Add statistical annotations
+    if comparison_stats and len(comparison_stats) > 0:
+        y_max = max(facet_data['expression'].max(), ax.get_ylim()[1])
+        y_step = (y_max - ax.get_ylim()[0]) * 0.1
+
+        for idx, comparison in enumerate(comparison_stats):
+            # Extract comparison information
+            if len(comparison) >= 3:
+                _, group1, group2 = comparison[:3]
+
+                try:
+                    x1 = groups.index(group1)
+                    x2 = groups.index(group2)
+
+                    # Get data for statistical test
+                    group1_data = facet_data[facet_data['group'] == group1]['expression']
+                    group2_data = facet_data[facet_data['group'] == group2]['expression']
+
+                    if len(group1_data) > 0 and len(group2_data) > 0:
+                        # Compute statistics
+                        stats_dict = _compute_standard_statistics(group1_data, group2_data, method=stat_method)
+
+                        # Add annotation
+                        y_pos = y_max + (idx + 1) * y_step
+                        _add_statistical_annotation_standard(
+                            ax, x1, x2, y_pos, stats_dict, stat_display_options, detailed_stats, p_thresholds
+                        )
+
+                except (ValueError, IndexError):
+                    continue  # Skip invalid comparisons
+
+    # Set axis labels and formatting
+    if show_xlabel:
+        if group_labels:
+            labels = [group_labels.get(group, group) for group in groups]
+        else:
+            labels = groups
+        ax.set_xticks(range(len(groups)))
+        ax.set_xticklabels(labels, rotation=xlabel_rotation, ha=xlabel_ha, fontsize=xlabel_fontsize)
+    else:
+        ax.set_xticks([])
+
+    # Set y-axis labels
+    if is_leftmost_subplot:
+        layer_text = f" ({layer})" if layer else ""
+        ax.set_ylabel(f'{gene} Expression{layer_text}', fontsize=ylabel_fontsize)
+        if ax2 is not None and plot_mean:
+            ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize)
+
+    # Set tick font sizes
+    ax.tick_params(axis='both', which='major', labelsize=axis_tick_fontsize)
+    if ax2 is not None:
+        ax2.tick_params(axis='both', which='major', labelsize=axis_tick_fontsize)
+
+    # Hide right y-axis if not rightmost subplot
+    if ax2 is not None and not is_rightmost_subplot:
+        ax2.set_ylabel('')
+        ax2.tick_params(right=False, labelright=False)
+
+
+def vlnplot(adata, gene, group_by,
+           title=None,
+           layer=None,
+           expression_threshold=0.1,
+           split_by=None,
+           facet_by=None,
+           group_order=None,
+           split_order=None,
+           facet_order=None,
+           group_colors=None,
+           split_colors=None,
+           jitter_points=True,
+           jitter_dot_size=12,
+           plot_mean=True,
+           show_fraction=True,
+           show_legend=None,             # Smart default: False for regular, True for split
+           legend_loc='upper right',     # Legend position
+           show_group_legend=None,       # Explicit group legend control
+           group_legend_loc='below',     # Group legend position
+           group_legend_fontsize=None,   # Inherits from legend_fontsize
+           show_xlabel=True,             # Control x-axis label visibility
+           group_labels=None,            # X-axis abbreviation dictionary
+           stat_method='ttest',          # Statistical method: 'ttest', 'wilcoxon', 'mannwhitney'
+           comparisons=None,             # Simple comparison tuples: [('group', 'A', 'B')]
+           detailed_stats=False,         # Show detailed statistical labels vs clean stars
+           p_thresholds=(0.05, 0.01, 0.001),  # P-value thresholds for *, **, ***
+           stat_display_options=None,    # Statistical display preferences
+           title_fontsize=14,            # Main plot title
+           subtitle_fontsize=9,          # Individual subplot titles
+           ylabel_fontsize=10,           # Y-axis labels (left side)
+           ylabel_mean_fontsize=10,      # Mean expression y-axis labels (right side)
+           xlabel_fontsize=8,            # X-axis group labels
+           axis_tick_fontsize=8,         # Axis tick numbers
+           legend_fontsize=8,            # Split legend
+           number_fontsize=6,            # Cell count/fraction numbers
+           number_decimal_places=2,
+           xlabel_rotation=45,
+           xlabel_ha='right',
+           figsize=(12, 8),
+           facet_ncols=None,
+           mean_color='black',
+           mean_size=60,                 # Size for regular mean expression dots
+           plot_mean_pos_frac=False,     # Enable expressing-cells-only mean dots
+           mean_pos_frac_color='red',    # Color for expressing-cells-only mean dots
+           mean_pos_frac_size=60,        # Size for expressing-cells-only mean dots
+           free_y=True,
+           free_mean_y=False,
+           ylim=None):
+    """
+    Create violin plots for single-cell RNA sequencing data with standard statistical analysis.
+
+    This function creates violin plots optimized for standard single-cell data types
+    (raw counts, CPM, log-normalized) with built-in statistical testing capabilities.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix with expression data
+    gene : str
+        Gene name to plot (must be in adata.var_names)
+    group_by : str
+        Column in adata.obs to group cells by
+    title : str, optional
+        Plot title. If None, uses gene name
+    layer : str, optional
+        Layer to use for expression data. If None, uses adata.X
+    expression_threshold : float, default 0.1
+        Threshold for calculating % expressing cells
+    split_by : str, optional
+        Column in adata.obs for split violins (e.g., treatment conditions)
+    facet_by : str, optional
+        Column in adata.obs for faceting plots
+    group_order : list, optional
+        Custom order for groups
+    split_order : list, optional
+        Custom order for split categories
+    facet_order : list, optional
+        Custom order for facet categories
+    group_colors : dict, optional
+        Custom colors for groups {group_name: color}
+    split_colors : dict or list, optional
+        Custom colors for split categories
+    jitter_points : bool, default True
+        Whether to show individual data points
+    jitter_dot_size : float, default 12
+        Size of jitter points
+    plot_mean : bool, default True
+        Whether to show mean expression dots
+    show_fraction : bool, default True
+        Whether to show cell counts and % expressing
+    show_legend : bool, optional
+        Whether to show split legend. Auto-determined if None
+    legend_loc : str, default 'upper right'
+        Legend position
+    show_group_legend : bool, optional
+        Whether to show group legend
+    group_legend_loc : str, default 'below'
+        Group legend position
+    group_legend_fontsize : float, optional
+        Group legend font size
+    show_xlabel : bool, default True
+        Whether to show x-axis labels
+    group_labels : dict, optional
+        Custom x-axis labels {group_name: label}
+    stat_method : str, default 'ttest'
+        Statistical method: 'ttest', 'wilcoxon', 'mannwhitney'
+    comparisons : list, optional
+        Statistical comparisons: [('group', 'A', 'B'), ...]
+    detailed_stats : bool, default False
+        Show detailed stats (t=2.45, p=0.023) vs stars (**)
+    p_thresholds : tuple, default (0.05, 0.01, 0.001)
+        P-value thresholds for *, **, ***
+    stat_display_options : dict, optional
+        Statistical display preferences:
+        - show_pvalue: Show p-values
+        - show_logfc: Show log fold changes
+        - show_statistic: Show test statistics
+        - show_stars_only: Show only significance stars
+        - show_ns: Show 'ns' for non-significant
+    title_fontsize : float, default 14
+        Title font size
+    subtitle_fontsize : float, default 9
+        Subplot title font size
+    ylabel_fontsize : float, default 10
+        Y-axis label font size
+    ylabel_mean_fontsize : float, default 10
+        Mean y-axis label font size
+    xlabel_fontsize : float, default 8
+        X-axis label font size
+    axis_tick_fontsize : float, default 8
+        Axis tick font size
+    legend_fontsize : float, default 8
+        Legend font size
+    number_fontsize : float, default 6
+        Cell count/fraction font size
+    number_decimal_places : int, default 2
+        Decimal places for fractions
+    xlabel_rotation : float, default 45
+        X-axis label rotation
+    xlabel_ha : str, default 'right'
+        X-axis label horizontal alignment
+    figsize : tuple, default (12, 8)
+        Figure size
+    facet_ncols : int, optional
+        Number of columns for faceted plots
+    mean_color : str, default 'black'
+        Color for mean dots
+    mean_size : float, default 60
+        Size for mean dots
+    plot_mean_pos_frac : bool, default False
+        Show expressing-cells-only means
+    mean_pos_frac_color : str, default 'red'
+        Color for expressing-cells-only means
+    mean_pos_frac_size : float, default 60
+        Size for expressing-cells-only means
+    free_y : bool, default True
+        Independent y-axes for facets
+    free_mean_y : bool, default False
+        Independent mean y-axes for facets
+    ylim : tuple, optional
+        Y-axis limits
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The matplotlib figure object
+
+    Examples
+    --------
+    Basic violin plot:
+    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type')
+
+    With statistical comparisons:
+    >>> comparisons = [('group', 'TypeA', 'TypeB'), ('group', 'TypeA', 'TypeC')]
+    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type', comparisons=comparisons)
+
+    Split violin plot:
+    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type', split_by='treatment')
+
+    Faceted plot:
+    >>> fig = vlnplot(adata, 'GAPDH', 'cell_type', facet_by='tissue')
+    """
+    import math
+    import pandas as pd
+    import numpy as np
+    import seaborn as sns
+
+    # Input validation
+    if adata is None:
+        raise ValueError("AnnData object cannot be None")
+    if gene is None:
+        raise ValueError("Gene cannot be None")
+    if group_by is None:
+        raise ValueError("group_by cannot be None")
+
+    if gene not in adata.var_names:
+        raise ValueError(f"Gene '{gene}' not found in adata.var_names")
+    if group_by not in adata.obs.columns:
+        raise ValueError(f"Group column '{group_by}' not found in adata.obs")
+
+    # Extract expression data
+    if layer is None:
+        print("⚠️  Using .X matrix - consider specifying a layer for clearer data interpretation")
+        expression_data = adata[:, gene].X
+        data_source = "adata.X"
+    else:
+        if layer not in adata.layers.keys():
+            raise ValueError(f"Layer '{layer}' not found in adata.layers")
+        expression_data = adata[:, gene].layers[layer]
+        data_source = f"layer '{layer}'"
+
+    # Convert to dense if sparse
+    if hasattr(expression_data, 'toarray'):
+        expression_data = expression_data.toarray()
+    expression_data = expression_data.flatten()
+
+    print(f"📊 Using data from: {data_source}")
+    print(f"📈 Expression range: {expression_data.min():.3f} - {expression_data.max():.3f}")
+
+    # Build main DataFrame
+    plot_data = pd.DataFrame({
+        'group': adata.obs[group_by].values,
+        'expression': expression_data
+    }, index=adata.obs.index)
+
+    # Add split and facet columns if specified
+    if split_by is not None:
+        if split_by not in adata.obs.columns:
+            raise ValueError(f"Split column '{split_by}' not found in adata.obs")
+        plot_data['split'] = adata.obs[split_by].values
+
+    if facet_by is not None:
+        if facet_by not in adata.obs.columns:
+            raise ValueError(f"Facet column '{facet_by}' not found in adata.obs")
+        plot_data['facet'] = adata.obs[facet_by].values
+
+    # Validate and process comparisons
+    if comparisons is not None:
+        valid_comparisons, warnings = _validate_and_filter_comparisons(
+            comparisons, adata, group_by, split_by
+        )
+        for warning in warnings:
+            print(f"⚠️  {warning}")
+        comparisons = valid_comparisons
+
+    # Category ordering
+    def _get_category_order(data_col, custom_order, param_name):
+        """Get category order with validation"""
+        available_categories = set(data_col.unique())
+
+        if custom_order is not None:
+            custom_set = set(custom_order)
+            missing_in_custom = available_categories - custom_set
+            missing_in_data = custom_set - available_categories
+
+            if missing_in_data:
+                print(f"⚠️  {param_name}: Categories {missing_in_data} not found in data")
+            if missing_in_custom:
+                print(f"⚠️  {param_name}: Categories {missing_in_custom} not in custom order")
+
+            valid_order = [cat for cat in custom_order if cat in available_categories]
+            print(f"📋 {param_name} order: {valid_order}")
+            return valid_order
+        else:
+            default_order = sorted(available_categories)
+            print(f"📋 {param_name} order (alphabetical): {default_order}")
+            return default_order
+
+    # Apply category ordering
+    groups = _get_category_order(plot_data['group'], group_order, 'Groups')
+
+    if split_by is not None:
+        splits = _get_category_order(plot_data['split'], split_order, 'Splits')
+    else:
+        splits = None
+
+    # Set up colors
+    group_colors_list = _get_colors_from_dict(
+        group_colors, groups, sns.color_palette("Set2", len(groups)), "Group colors"
+    )
+
+    if split_by is not None and splits is not None:
+        split_colors_list = _get_colors_from_dict(
+            split_colors, splits, sns.color_palette("Set1", len(splits)), "Split colors"
+        )
+    else:
+        split_colors_list = None
+
+    # Layout determination
+    if facet_by is not None:
+        facets = _get_category_order(plot_data['facet'], facet_order, 'Facets')
+        n_facets = len(facets)
+
+        if facet_ncols is not None:
+            facet_cols = min(facet_ncols, n_facets)
+            facet_rows = math.ceil(n_facets / facet_cols)
+        else:
+            facet_cols = n_facets
+            facet_rows = 1
+
+        if figsize is None:
+            figsize = (4 * facet_cols, 4 * facet_rows)
+
+        fig, ax_pairs = _create_faceted_plot_layout(facet_rows, facet_cols, figsize)
+        is_faceted = True
+    else:
+        facets = [None]
+        fig, ax_pairs = _create_single_plot_layout(figsize)
+        is_faceted = False
+
+    # Default statistical display options
+    if stat_display_options is None:
+        stat_display_options = {
+            'show_pvalue': False,
+            'show_logfc': False,
+            'show_statistic': False,
+            'show_stars_only': True,
+            'show_ns': False
+        }
+
+    # Plot each facet
+    for idx, (ax1, ax2, row, col) in enumerate(ax_pairs):
+        if is_faceted:
+            if idx >= len(facets):
+                ax1.axis('off')
+                ax2.axis('off')
+                continue
+
+            facet_cat = facets[idx]
+            facet_data = plot_data[plot_data['facet'] == facet_cat]
+            subplot_title = f"{facet_cat}"
+        else:
+            facet_data = plot_data
+            subplot_title = title if title else f"{gene} Expression"
+
+        # Determine subplot positions for axis labeling
+        is_leftmost = (col == 0) if is_faceted else True
+        is_rightmost = (col == (ax_pairs[0][3] if ax_pairs else 0)) if is_faceted else True
+
+        # Call plotting function
+        _plot_single_facet_standard(
+            ax1, ax2, facet_data, groups, group_colors_list,
+            split_by, split_colors_list, splits, jitter_points, jitter_dot_size,
+            plot_mean, mean_color, mean_size, show_fraction,
+            expression_threshold, number_fontsize, number_decimal_places,
+            show_xlabel, xlabel_rotation, xlabel_ha, xlabel_fontsize,
+            ylabel_fontsize, ylabel_mean_fontsize, axis_tick_fontsize,
+            plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
+            group_labels, gene, layer, is_leftmost, is_rightmost,
+            comparisons, detailed_stats, stat_method,
+            stat_display_options, p_thresholds
+        )
+
+        # Add subplot title
+        if is_faceted:
+            ax1.set_title(subplot_title, fontsize=subtitle_fontsize)
+
+    # Set main title
+    if not is_faceted and title:
+        fig.suptitle(title, fontsize=title_fontsize)
+    elif is_faceted:
+        main_title = title if title else f"{gene} Expression"
+        fig.suptitle(main_title, fontsize=title_fontsize)
+
+    # Add legends if needed
+    if split_by is not None and (show_legend is True or (show_legend is None and split_by is not None)):
+        # Create split legend
+        legend_elements = []
+        for i, split in enumerate(splits):
+            color = split_colors_list[i % len(split_colors_list)]
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                            markerfacecolor=color, markersize=8, label=split))
+
+        fig.legend(handles=legend_elements, loc=legend_loc, fontsize=legend_fontsize,
+                  title=split_by, title_fontsize=legend_fontsize)
+
+    plt.tight_layout()
+
+    return fig
 
 
 def vlnplot_scvi(adata, gene, group_by,
