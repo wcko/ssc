@@ -1377,7 +1377,8 @@ def vlnplot(adata, gene, group_by,
 def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                       split_by, jitter_points, jitter_dot_size, plot_mean,
                       mean_color, mean_size, fraction_df, fraction_threshold,
-                      show_fraction, number_fontsize, number_decimal_places):
+                      show_fraction, number_fontsize, number_decimal_places,
+                      expression_threshold):
     """Helper function to plot a single facet or the main plot"""
 
     # Simple violin plotting (no splits for now)
@@ -1418,6 +1419,55 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
             ax.text(i, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
                    fontsize=14, color='gray', style='italic',
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.3))
+
+    # Add fraction numbers if requested
+    if show_fraction:
+        for i, group in enumerate(groups):
+            group_data = facet_data[facet_data['group'] == group]['expression']
+
+            if len(group_data) > 0:
+                n_cells = len(group_data)
+                if fraction_df is not None:
+                    # Use raw data for fraction calculation
+                    group_indices = facet_data[facet_data['group'] == group].index
+                    # Subset fraction_df to indices that exist in the current facet
+                    available_indices = fraction_df.index.intersection(group_indices)
+                    if len(available_indices) > 0:
+                        group_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
+                        n_expressing = (group_fraction_data > fraction_threshold).sum()
+                        frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                    else:
+                        # Fallback if no indices match
+                        n_expressing = (group_data > expression_threshold).sum()
+                        frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                else:
+                    # Fallback: use expression data itself
+                    n_expressing = (group_data > expression_threshold).sum()
+                    frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+
+                # Total cells - positioned just below x-axis
+                ax.text(i, -0.08, f'{n_cells}', ha='center', va='top',
+                        fontsize=number_fontsize, weight='bold',
+                        transform=ax.get_xaxis_transform())
+                # Expressing cells - middle row
+                ax.text(i, -0.12, f'{n_expressing}', ha='center', va='top',
+                        fontsize=number_fontsize-1,
+                        transform=ax.get_xaxis_transform())
+                # Fraction expressing - bottom row
+                ax.text(i, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
+                        ha='center', va='top', fontsize=number_fontsize-1,
+                        transform=ax.get_xaxis_transform())
+            else:
+                # Empty data indicators
+                ax.text(i, -0.08, '0', ha='center', va='top',
+                        fontsize=number_fontsize, weight='bold', color='gray',
+                        transform=ax.get_xaxis_transform())
+                ax.text(i, -0.12, '0', ha='center', va='top',
+                        fontsize=number_fontsize-1, color='gray',
+                        transform=ax.get_xaxis_transform())
+                ax.text(i, -0.16, '--', ha='center', va='top',
+                        fontsize=number_fontsize-1, color='gray',
+                        transform=ax.get_xaxis_transform())
 
     # Set basic formatting
     ax.set_xticks(range(len(groups)))
@@ -1860,7 +1910,8 @@ def vlnplot_scvi(adata, gene, group_by,
             _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                               split_by, jitter_points, jitter_dot_size, plot_mean,
                               mean_color, mean_size, fraction_df, fraction_threshold,
-                              show_fraction, number_fontsize, number_decimal_places)
+                              show_fraction, number_fontsize, number_decimal_places,
+                              expression_threshold)
 
         # Hide empty subplots
         for idx in range(n_facets, n_rows * n_cols):
