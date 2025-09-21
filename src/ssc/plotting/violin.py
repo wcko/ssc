@@ -690,12 +690,17 @@ def vlnplot(adata, gene, group_by,
     mean_color : str, default 'black'
         Color for mean expression dots and axis
     free_y : bool, default True
-        If True, allow independent gene expression y-axis scaling for each subplot
+        For faceted plots: If True, allow independent gene expression y-axis scaling per facet.
+        If False, use shared y-axis scaling across all facets for easier comparison.
+        For single plots: parameter is ignored (always uses auto-scaling).
     free_mean_y : bool, default False
-        If True, allow independent mean expression y-axis scaling for each subplot
+        For faceted plots: If True, allow independent mean expression y-axis scaling per facet.
+        If False, use shared mean y-axis scaling across all facets.
+        For single plots: parameter is ignored.
     ylim : tuple, optional
-        Y-axis limits for gene expression (left axis) as (min, max). 
-        Overrides free_y behavior when specified. Mean expression axis unaffected.
+        Manual y-axis limits for gene expression (left axis) as (min, max).
+        When specified, overrides free_y behavior and applies the same limits to all facets.
+        Does not affect mean expression (right) axis. Works for both single and faceted plots.
     
     Returns
     -------
@@ -2016,12 +2021,18 @@ def vlnplot_scvi(adata, gene, group_by,
         else:
             split_colors_dict = split_colors
 
+        # Store axes for y-axis scaling
+        facet_axes_pairs = []
+
         # Plot each facet
         for idx, facet_cat in enumerate(facet_categories):
             row = idx // n_cols
             col = idx % n_cols
             ax = axes[row, col]
             ax2 = ax.twinx()
+
+            # Store axes pair for later y-axis scaling
+            facet_axes_pairs.append((ax, ax2))
 
             # Subset data for this facet
             facet_data = plot_data[plot_data['facet_by'] == facet_cat].copy()
@@ -2086,6 +2097,51 @@ def vlnplot_scvi(adata, gene, group_by,
                 split_legend = last_ax.legend(handles=split_legend_elements, loc=legend_loc,
                                            fontsize=legend_fontsize,
                                            title=split_by, title_fontsize=legend_fontsize)
+
+        # Apply y-axis scaling for faceted plots
+        # Handle free_y scaling for expression data (left y-axis)
+        if not free_y:
+            # Calculate global y-limits across all facets
+            all_y_mins, all_y_maxs = [], []
+            for ax, ax2 in facet_axes_pairs:
+                y_min, y_max = ax.get_ylim()
+                all_y_mins.append(y_min)
+                all_y_maxs.append(y_max)
+
+            if all_y_mins and all_y_maxs:
+                global_y_min = min(all_y_mins)
+                global_y_max = max(all_y_maxs)
+
+                # Apply global limits to all facets
+                for ax, ax2 in facet_axes_pairs:
+                    ax.set_ylim(global_y_min, global_y_max)
+
+                print(f"🔗 Applied shared y-axis scaling: ({global_y_min:.3f}, {global_y_max:.3f})")
+
+        # Handle free_mean_y scaling for mean expression data (right y-axis)
+        if not free_mean_y:
+            # Calculate global mean y-limits across all facets
+            all_mean_y_mins, all_mean_y_maxs = [], []
+            for ax, ax2 in facet_axes_pairs:
+                y_min, y_max = ax2.get_ylim()
+                all_mean_y_mins.append(y_min)
+                all_mean_y_maxs.append(y_max)
+
+            if all_mean_y_mins and all_mean_y_maxs:
+                global_mean_y_min = min(all_mean_y_mins)
+                global_mean_y_max = max(all_mean_y_maxs)
+
+                # Apply global limits to all mean axes
+                for ax, ax2 in facet_axes_pairs:
+                    ax2.set_ylim(global_mean_y_min, global_mean_y_max)
+
+                print(f"🔗 Applied shared mean y-axis scaling: ({global_mean_y_min:.3f}, {global_mean_y_max:.3f})")
+
+        # Apply ylim override if specified (only affects expression/left y-axis)
+        if ylim is not None:
+            for ax, ax2 in facet_axes_pairs:
+                ax.set_ylim(ylim)
+            print(f"⚙️  Applied manual y-axis limits: {ylim}")
 
         # Add overall title
         if title is not None:
