@@ -1376,6 +1376,7 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                       expression_threshold, show_xlabel, xlabel_rotation,
                       xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
                       axis_tick_fontsize, plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
+                      group_labels,
                       gene, layer, is_leftmost_subplot, is_rightmost_subplot):
     """Helper function to plot a single facet or the main plot"""
 
@@ -1511,9 +1512,17 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
             # Standard position
             label_y_position = -0.08
 
+        # Determine x-axis labels (use abbreviations if provided)
+        if group_labels is not None:
+            # Use abbreviated labels when group_labels is provided
+            x_labels = [group_labels.get(group, group) for group in groups]
+        else:
+            # Use full group names
+            x_labels = groups
+
         # Apply x-axis labels with custom formatting
-        for i, group in enumerate(groups):
-            ax.text(i, label_y_position, group,
+        for i, (group, label) in enumerate(zip(groups, x_labels)):
+            ax.text(i, label_y_position, label,
                    ha=xlabel_ha, va='top',
                    fontsize=xlabel_fontsize,
                    rotation=xlabel_rotation,
@@ -1993,6 +2002,7 @@ def vlnplot_scvi(adata, gene, group_by,
                               expression_threshold, show_xlabel, xlabel_rotation,
                               xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
                               axis_tick_fontsize, plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
+                              group_labels,
                               gene, layer, is_leftmost_subplot, is_rightmost_subplot)
 
         # Hide empty subplots
