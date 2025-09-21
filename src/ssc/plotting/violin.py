@@ -1303,7 +1303,8 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                       xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
                       axis_tick_fontsize, plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
                       group_labels,
-                      gene, layer, is_leftmost_subplot, is_rightmost_subplot):
+                      gene, layer, is_leftmost_subplot, is_rightmost_subplot,
+                      comparison_stats=None, detailed_stats=False, proba_de_thresholds=(0.6, 0.8, 0.95), de_mode='change'):
     """Helper function to plot a single facet or the main plot"""
 
     # Create violin plots (with or without splits)
@@ -1648,6 +1649,136 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
     ax.tick_params(axis='y', labelsize=axis_tick_fontsize)
     ax.tick_params(axis='x', labelsize=axis_tick_fontsize)
 
+    # Add statistical annotations for faceted plots
+    if comparison_stats:
+        y_min, y_max = ax.get_ylim()
+
+        # Calculate annotation heights
+        annotation_height_start = y_max * 1.05
+        annotation_height_step = y_max * 0.08
+        comparison_annotation_count = 0
+
+        for comp_key, stats in comparison_stats.items():
+            proba_de = stats.get('proba_de', 0)
+            lfc = stats.get('lfc_mean', 0)  # Use lfc_mean instead of lfc
+            bayes_factor = stats.get('bayes_factor', 0)
+
+            # Determine significance level
+            significance = _get_star_annotation(proba_de, proba_de_thresholds)
+
+            if significance:  # Only annotate significant comparisons
+                # Parse comparison key to get groups
+                if comp_key.startswith('group_'):
+                    # Group comparison: extract group names
+                    parts = comp_key.replace('group_', '').split('_vs_')
+                    if len(parts) == 2:
+                        group1, group2 = parts
+
+                        try:
+                            x1 = groups.index(group1)
+                            x2 = groups.index(group2)
+                            y_pos = annotation_height_start + comparison_annotation_count * annotation_height_step
+
+                            # Add significance line
+                            ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
+                            ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+                            ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+
+                            # Create annotation text based on detailed_stats setting
+                            x_center = (x1 + x2) / 2
+
+                            if detailed_stats == "full":
+                                annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}\nBF={bayes_factor:.1f}"
+                            elif detailed_stats == "medium":
+                                annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
+                            elif detailed_stats == "minimal":
+                                annotation = f"{significance}\nP(DE)={proba_de:.2f}"
+                            elif detailed_stats is True:  # Legacy support
+                                if abs(lfc) >= 0.1:
+                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
+                                else:
+                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}"
+                            else:
+                                annotation = significance
+
+                            ax.text(x_center, y_pos + y_max*0.03, annotation, ha='center', va='bottom',
+                                   fontsize=10, fontweight='bold')
+                            comparison_annotation_count += 1
+                        except ValueError:
+                            # Groups not found in this facet - skip annotation
+                            pass
+
+                elif comp_key.startswith('split_'):
+                    # Split comparison: extract group and split names
+                    # Format: split_<group>_<split1>_vs_<split2>
+                    parts = comp_key.replace('split_', '').split('_vs_')
+                    if len(parts) == 2:
+                        left_part, split2 = parts
+                        # Extract group and split1 from left part
+                        # Need to find where group ends and split1 begins
+                        for split in splits:
+                            if left_part.endswith(f'_{split}'):
+                                group = left_part[:-len(f'_{split}')]
+                                split1 = split
+                                break
+                        else:
+                            continue  # Skip if can't parse
+
+                        # Find positions of the splits within this group
+                        try:
+                            group_idx = groups.index(group)
+
+                            # Calculate x positions for split violins within this group
+                            if len(splits) > 1:
+                                violin_width = 0.6
+                                split_width = violin_width / len(splits)
+
+                                # Find split indices
+                                split1_idx = splits.index(split1)
+                                split2_idx = splits.index(split2)
+
+                                # Calculate x positions
+                                x1 = group_idx - (violin_width/2) + (split1_idx + 0.5) * split_width
+                                x2 = group_idx - (violin_width/2) + (split2_idx + 0.5) * split_width
+
+                                y_pos = annotation_height_start + comparison_annotation_count * annotation_height_step
+
+                                # Add significance line
+                                ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
+                                ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+                                ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+
+                                # Create annotation text
+                                x_center = (x1 + x2) / 2
+
+                                if detailed_stats == "full":
+                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}\nBF={bayes_factor:.1f}"
+                                elif detailed_stats == "medium":
+                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
+                                elif detailed_stats == "minimal":
+                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}"
+                                elif detailed_stats is True:  # Legacy support
+                                    if abs(lfc) >= 0.1:
+                                        annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
+                                    else:
+                                        annotation = f"{significance}\nP(DE)={proba_de:.2f}"
+                                else:
+                                    annotation = significance
+
+                                ax.text(x_center, y_pos + y_max*0.03, annotation, ha='center', va='bottom',
+                                       fontsize=10, fontweight='bold')
+                                comparison_annotation_count += 1
+
+                        except ValueError:
+                            # Group not found in this facet - skip annotation
+                            pass
+
+        # Adjust y-axis to accommodate annotations if any were added
+        if comparison_annotation_count > 0:
+            max_annotation_height = annotation_height_start + comparison_annotation_count * annotation_height_step
+            new_y_max = max_annotation_height + y_max * 0.1
+            ax.set_ylim(0, new_y_max)
+
 
 def vlnplot_scvi(adata, gene, group_by,
                     title=None,
@@ -1714,9 +1845,26 @@ def vlnplot_scvi(adata, gene, group_by,
     group_by : str
         Column name in adata.obs for grouping cells on x-axis
         (e.g., 'condition', 'celltype', 'timepoint', 'treatment')
+    title : str, optional
+        Custom plot title. If None (default), uses gene name. For faceted plots,
+        becomes the main title above all subplots.
+        Example: 'GNLY Expression Across Conditions'
+    layer : str, optional
+        scVI-transformed expression data layer to use instead of .X.
+        Useful when scVI-transformed counts from different preprocessing
+        (e.g. ambient RNA-corrected vs uncorrected) are stored in separate layers.
+        Must exist in adata.layers. For raw/standard normalized counts,
+        use the vlnplot() function instead.
+        Example: 'scvi_corrected', 'scvi_uncorrected'
     split_by : str, optional
         Column name in adata.obs for split violin plots
         (e.g., 'treatment', 'genotype', 'stimulus', 'batch')
+    facet_by : str, optional
+        Column name in adata.obs for creating subplot facets (R's facet_wrap equivalent).
+        Creates a separate subplot for each unique value in this column, arranged in a grid.
+        When combined with comparisons and scvi_model, performs per-facet differential
+        expression analysis for more granular statistical insights.
+        Example: 'subject', 'timepoint', 'batch', 'experiment'
     raw_layer : str, default 'raw'
         Layer containing raw counts for fraction expressing calculation.
         Falls back to main data with threshold if layer not found.
@@ -1839,6 +1987,18 @@ def vlnplot_scvi(adata, gene, group_by,
         Color for expressing-cells-only mean dots
     mean_pos_frac_size : int, default 60
         Size of expressing-cells-only mean dots
+    free_y : bool, default True
+        Allow independent y-axis scaling for each facet subplot.
+        When True, each facet optimizes its y-axis range based on local data.
+        When False, all facets share the same y-axis range for easier comparison.
+    free_mean_y : bool, default False
+        Allow independent mean expression y-axis (right side) scaling for each facet.
+        When True, each facet optimizes its mean y-axis independently.
+        When False, all facets share the same mean y-axis range.
+    ylim : tuple, optional
+        Fixed y-axis limits for expression data (left y-axis).
+        Format: (y_min, y_max). Overrides free_y behavior when specified.
+        Example: (0, 10) to set expression range from 0 to 10.
     *_fontsize : int
         Font sizes for various plot elements (title, labels, legend, etc.)
 
@@ -1865,12 +2025,33 @@ def vlnplot_scvi(adata, gene, group_by,
     ...     proba_de_thresholds=(0.4, 0.6, 0.8)
     ... )
 
+    Pattern B: Faceted plots with per-facet differential expression
+
+    >>> # Faceted plot across subjects with per-facet statistical analysis
+    >>> ssc.vlnplot_scvi(
+    ...     adata, 'GNLY', group_by='condition', split_by='treatment',
+    ...     facet_by='subject', facet_ncols=2,
+    ...     scvi_model=scvi_model,
+    ...     comparisons=[
+    ...         ('group', 'Nonlesional', 'SADBE'),     # Group comparison per facet
+    ...         ('split', 'Nonlesional', 'dupi', 'pre'), # Split comparison per facet
+    ...         ('split', 'SADBE', 'dupi', 'pre')
+    ...     ],
+    ...     detailed_stats='medium',
+    ...     facet_order=['BB07', 'BB10', 'BB11', 'BB12'],
+    ...     figsize=(16, 12)
+    ... )
+
     Notes
     -----
     - Statistical comparisons require scvi_model parameter
-    - Use detailed_stats='full' to see P-values and log fold changes on plot
+    - Use detailed_stats='full' to see * annotation, P(DE), log fold changes, and Bayes Factor on plot
     - Function automatically handles scVI's 1-vs-all DE results and converts to pairwise comparisons
     - Supports both group comparisons and split comparisons within groups
+    - **Faceting behavior**: When facet_by is used with comparisons, differential expression
+      analysis is performed separately for each facet (e.g., per-subject analysis).
+      This enables detection of subject-specific or context-specific expression differences
+      rather than population-level averages. Each subplot shows its own statistical annotations.
     """
 
     import warnings
@@ -2075,6 +2256,29 @@ def vlnplot_scvi(adata, gene, group_by,
             # Subset data for this facet
             facet_data = plot_data[plot_data['facet_by'] == facet_cat].copy()
 
+            # Calculate per-facet DE statistics if comparisons are specified
+            facet_comparison_stats = {}
+            if comparisons and scvi_model and len(facet_data) > 0:
+                # Subset adata to this facet for DE analysis
+                facet_mask = adata.obs[facet_by] == facet_cat
+                facet_adata = adata[facet_mask].copy()
+
+                if len(facet_adata) > 0:
+                    print(f"🔬 Computing DE for facet {facet_cat} ({len(facet_adata)} cells)")
+
+                    # Validate and filter comparisons for this facet
+                    valid_facet_comparisons, _ = _validate_and_filter_comparisons(
+                        comparisons, facet_adata, group_by, split_by)
+
+                    if len(valid_facet_comparisons) > 0:
+                        facet_comparison_stats = _process_comparisons(
+                            facet_adata, gene, scvi_model, valid_facet_comparisons, group_by, split_by)
+                        print(f"   ✓ Found {len(facet_comparison_stats)} significant comparisons in {facet_cat}")
+                    else:
+                        print(f"   ○ No valid comparisons for facet {facet_cat}")
+                else:
+                    print(f"   ⚠️ No data for facet {facet_cat}")
+
             # Set subplot title
             ax.set_title(f"{facet_cat}", fontsize=subtitle_fontsize)
 
@@ -2091,7 +2295,8 @@ def vlnplot_scvi(adata, gene, group_by,
                               xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
                               axis_tick_fontsize, plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
                               group_labels,
-                              gene, layer, is_leftmost_subplot, is_rightmost_subplot)
+                              gene, layer, is_leftmost_subplot, is_rightmost_subplot,
+                              facet_comparison_stats, detailed_stats, proba_de_thresholds, de_mode)
 
         # Hide empty subplots
         for idx in range(n_facets, n_rows * n_cols):
