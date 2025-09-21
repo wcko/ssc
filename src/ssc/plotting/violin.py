@@ -1833,6 +1833,11 @@ def vlnplot_scvi(adata, gene, group_by,
 
                     # Collect for axis scaling
                     all_means_pos_frac.append(group_mean_pos_frac)
+            else:
+                # No data available for this group - add placeholder
+                ax.text(i, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
+                        fontsize=14, color='gray', style='italic',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.3))
 
     # Add fraction numbers for regular violins
     if show_fraction and split_by is None:
@@ -1990,6 +1995,13 @@ def vlnplot_scvi(adata, gene, group_by,
 
                         # Collect for axis scaling
                         all_means_pos_frac.append(split_mean_pos_frac)
+                else:
+                    # No data available for this group + split combination - add placeholder
+                    x_offset = (j - (len(splits) - 1) / 2) * violin_width
+                    x_pos = i + x_offset
+                    ax.text(x_pos, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
+                            fontsize=12, color='gray', style='italic',
+                            bbox=dict(boxstyle='round,pad=0.2', facecolor='lightgray', alpha=0.3))
 
     # Add fraction numbers for split violins
     if show_fraction and split_by is not None:
