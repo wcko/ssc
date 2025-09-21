@@ -2187,6 +2187,43 @@ def vlnplot_scvi(adata, gene, group_by,
             col = idx % n_cols
             axes[row, col].axis('off')
 
+        # Add legend for split violins in faceted plots
+        if show_legend and split_by is not None and splits is not None:
+            # Create legend elements for splits using the last subplot for positioning
+            last_ax = axes.flat[-1] if len(axes.flat) > 0 else axes[0, 0]
+
+            split_legend_elements = []
+            for j, split in enumerate(splits):
+                if split_colors_dict and split in split_colors_dict:
+                    split_color = split_colors_dict[split]
+                else:
+                    # Default colors if no custom split colors provided
+                    default_colors = ['purple', 'orange', 'green', 'red', 'blue']
+                    split_color = default_colors[j % len(default_colors)]
+
+                split_legend_elements.append(plt.Rectangle((0,0), 1, 1,
+                                                         facecolor=split_color, alpha=0.7,
+                                                         edgecolor='black', linewidth=0.5,
+                                                         label=split))
+
+            # Handle custom legend positions for faceted plots
+            if legend_loc == 'below':
+                # Place below the entire figure
+                split_legend = fig.legend(handles=split_legend_elements, fontsize=legend_fontsize,
+                                       title=split_by, title_fontsize=legend_fontsize,
+                                       bbox_to_anchor=(0.5, 0.02), loc='lower center',
+                                       ncol=len(splits))
+            elif legend_loc == 'right':
+                # Place to the right of the entire figure
+                split_legend = fig.legend(handles=split_legend_elements, fontsize=legend_fontsize,
+                                       title=split_by, title_fontsize=legend_fontsize,
+                                       bbox_to_anchor=(0.98, 0.5), loc='center left')
+            else:
+                # Place in specified location on the last subplot
+                split_legend = last_ax.legend(handles=split_legend_elements, loc=legend_loc,
+                                           fontsize=legend_fontsize,
+                                           title=split_by, title_fontsize=legend_fontsize)
+
         # Add overall title
         if title is not None:
             fig.suptitle(title, fontsize=title_fontsize)
