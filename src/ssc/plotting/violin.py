@@ -1375,7 +1375,7 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                       show_fraction, number_fontsize, number_decimal_places,
                       expression_threshold, show_xlabel, xlabel_rotation,
                       xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
-                      axis_tick_fontsize,
+                      axis_tick_fontsize, plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
                       gene, layer, is_leftmost_subplot, is_rightmost_subplot):
     """Helper function to plot a single facet or the main plot"""
 
@@ -1412,6 +1412,37 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                 if ax2 is not None:
                     ax2.scatter(i, group_mean, c=mean_color, s=mean_size, marker='o',
                                edgecolors='white', linewidth=1, zorder=10)
+
+                # Add expressing-cells-only mean if enabled
+                if plot_mean_pos_frac:
+                    if fraction_df is not None:
+                        # Use raw data for identifying expressing cells
+                        group_indices = facet_data[facet_data['group'] == group].index
+                        # Subset to indices that exist in the current facet
+                        available_indices = fraction_df.index.intersection(group_indices)
+                        if len(available_indices) > 0:
+                            group_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
+                            expressing_mask = group_fraction_data > fraction_threshold
+                            if expressing_mask.sum() > 0:
+                                # Get the corresponding expression data for expressing cells
+                                expressing_indices = available_indices[expressing_mask]
+                                facet_expressing_data = facet_data[facet_data.index.isin(expressing_indices)]['expression']
+                                group_mean_pos_frac = facet_expressing_data.mean()
+                            else:
+                                group_mean_pos_frac = 0
+                        else:
+                            group_mean_pos_frac = 0
+                    else:
+                        # Fallback: use expression data itself
+                        expressing_mask = group_data > expression_threshold
+                        if expressing_mask.sum() > 0:
+                            group_mean_pos_frac = group_data[expressing_mask].mean()
+                        else:
+                            group_mean_pos_frac = 0
+
+                    if ax2 is not None and group_mean_pos_frac > 0:
+                        ax2.scatter(i, group_mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size, marker='o',
+                                   edgecolors='white', linewidth=1, zorder=11)
         else:
             # No data available for this group - add placeholder
             ax.text(i, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
@@ -1961,7 +1992,7 @@ def vlnplot_scvi(adata, gene, group_by,
                               show_fraction, number_fontsize, number_decimal_places,
                               expression_threshold, show_xlabel, xlabel_rotation,
                               xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
-                              axis_tick_fontsize,
+                              axis_tick_fontsize, plot_mean_pos_frac, mean_pos_frac_color, mean_pos_frac_size,
                               gene, layer, is_leftmost_subplot, is_rightmost_subplot)
 
         # Hide empty subplots
