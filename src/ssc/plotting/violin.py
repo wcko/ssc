@@ -1370,7 +1370,7 @@ def vlnplot(adata, gene, group_by,
 
 
 def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
-                      split_by, jitter_points, jitter_dot_size, plot_mean,
+                      split_by, split_colors, splits, jitter_points, jitter_dot_size, plot_mean,
                       mean_color, mean_size, fraction_df, fraction_threshold,
                       show_fraction, number_fontsize, number_decimal_places,
                       expression_threshold, show_xlabel, xlabel_rotation,
@@ -1380,124 +1380,291 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                       gene, layer, is_leftmost_subplot, is_rightmost_subplot):
     """Helper function to plot a single facet or the main plot"""
 
-    # Simple violin plotting (no splits for now)
-    for i, group in enumerate(groups):
-        group_data = facet_data[facet_data['group'] == group]['expression']
-
-        if len(group_data) > 0:
-            # Create violin plot with specified colors
-            violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
-
-            # Apply custom colors to violin
-            group_color = group_colors_list[i]
-            for pc in violin_parts['bodies']:
-                pc.set_facecolor(group_color)
-                pc.set_alpha(0.7)
-                pc.set_edgecolor('black')
-                pc.set_linewidth(0.5)
-
-            # Add jitter points
-            if jitter_points:
-                x_jitter = np.random.normal(i, 0.1, size=len(group_data))
-                if isinstance(group_color, str):
-                    group_color_rgb = mcolors.to_rgb(group_color)
-                else:
-                    group_color_rgb = group_color[:3]
-                darker_color = tuple(c * 0.7 for c in group_color_rgb)
-                ax.scatter(x_jitter, group_data,
-                          c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
-
-            # Add mean expression points if enabled
-            if plot_mean:
-                group_mean = group_data.mean()
-                if ax2 is not None:
-                    ax2.scatter(i, group_mean, c=mean_color, s=mean_size, marker='o',
-                               edgecolors='white', linewidth=1, zorder=10)
-
-                # Add expressing-cells-only mean if enabled
-                if plot_mean_pos_frac:
-                    if fraction_df is not None:
-                        # Use raw data for identifying expressing cells
-                        group_indices = facet_data[facet_data['group'] == group].index
-                        # Subset to indices that exist in the current facet
-                        available_indices = fraction_df.index.intersection(group_indices)
-                        if len(available_indices) > 0:
-                            group_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
-                            expressing_mask = group_fraction_data > fraction_threshold
-                            if expressing_mask.sum() > 0:
-                                # Get the corresponding expression data for expressing cells
-                                expressing_indices = available_indices[expressing_mask]
-                                facet_expressing_data = facet_data[facet_data.index.isin(expressing_indices)]['expression']
-                                group_mean_pos_frac = facet_expressing_data.mean()
-                            else:
-                                group_mean_pos_frac = 0
-                        else:
-                            group_mean_pos_frac = 0
-                    else:
-                        # Fallback: use expression data itself
-                        expressing_mask = group_data > expression_threshold
-                        if expressing_mask.sum() > 0:
-                            group_mean_pos_frac = group_data[expressing_mask].mean()
-                        else:
-                            group_mean_pos_frac = 0
-
-                    if ax2 is not None and group_mean_pos_frac > 0:
-                        ax2.scatter(i, group_mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size, marker='o',
-                                   edgecolors='white', linewidth=1, zorder=11)
-        else:
-            # No data available for this group - add placeholder
-            ax.text(i, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
-                   fontsize=14, color='gray', style='italic',
-                   bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.3))
-
-    # Add fraction numbers if requested
-    if show_fraction:
+    # Create violin plots (with or without splits)
+    if split_by is None or splits is None:
+        # Original single violin logic
         for i, group in enumerate(groups):
             group_data = facet_data[facet_data['group'] == group]['expression']
 
             if len(group_data) > 0:
-                n_cells = len(group_data)
-                if fraction_df is not None:
-                    # Use raw data for fraction calculation
-                    group_indices = facet_data[facet_data['group'] == group].index
-                    # Subset fraction_df to indices that exist in the current facet
-                    available_indices = fraction_df.index.intersection(group_indices)
-                    if len(available_indices) > 0:
-                        group_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
-                        n_expressing = (group_fraction_data > fraction_threshold).sum()
-                        frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                # Create violin plot with specified colors
+                violin_parts = ax.violinplot([group_data], positions=[i], widths=0.6, showmeans=False, showextrema=False)
+
+                # Apply custom colors to violin
+                group_color = group_colors_list[i]
+                for pc in violin_parts['bodies']:
+                    pc.set_facecolor(group_color)
+                    pc.set_alpha(0.7)
+                    pc.set_edgecolor('black')
+                    pc.set_linewidth(0.5)
+
+                # Add jitter points
+                if jitter_points:
+                    x_jitter = np.random.normal(i, 0.1, size=len(group_data))
+                    if isinstance(group_color, str):
+                        group_color_rgb = mcolors.to_rgb(group_color)
                     else:
-                        # Fallback if no indices match
+                        group_color_rgb = group_color[:3]
+                    darker_color = tuple(c * 0.7 for c in group_color_rgb)
+                    ax.scatter(x_jitter, group_data,
+                              c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
+
+                # Add mean expression points if enabled
+                if plot_mean:
+                    group_mean = group_data.mean()
+                    if ax2 is not None:
+                        ax2.scatter(i, group_mean, c=mean_color, s=mean_size, marker='o',
+                                   edgecolors='white', linewidth=1, zorder=10)
+
+                    # Add expressing-cells-only mean if enabled
+                    if plot_mean_pos_frac:
+                        if fraction_df is not None:
+                            # Use raw data for identifying expressing cells
+                            group_indices = facet_data[facet_data['group'] == group].index
+                            # Subset to indices that exist in the current facet
+                            available_indices = fraction_df.index.intersection(group_indices)
+                            if len(available_indices) > 0:
+                                group_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
+                                expressing_mask = group_fraction_data > fraction_threshold
+                                if expressing_mask.sum() > 0:
+                                    # Get the corresponding expression data for expressing cells
+                                    expressing_indices = available_indices[expressing_mask]
+                                    facet_expressing_data = facet_data[facet_data.index.isin(expressing_indices)]['expression']
+                                    group_mean_pos_frac = facet_expressing_data.mean()
+                                else:
+                                    group_mean_pos_frac = 0
+                            else:
+                                group_mean_pos_frac = 0
+                        else:
+                            # Fallback: use expression data itself
+                            expressing_mask = group_data > expression_threshold
+                            if expressing_mask.sum() > 0:
+                                group_mean_pos_frac = group_data[expressing_mask].mean()
+                            else:
+                                group_mean_pos_frac = 0
+
+                        if ax2 is not None and group_mean_pos_frac > 0:
+                            ax2.scatter(i, group_mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size, marker='o',
+                                       edgecolors='white', linewidth=1, zorder=11)
+            else:
+                # No data available for this group - create invisible placeholder + text
+                # 1. Create invisible violin to establish coordinates
+                placeholder_violin = ax.violinplot([0], positions=[i], widths=0.6, showmeans=False, showextrema=False)
+                # Make it completely invisible
+                for pc in placeholder_violin['bodies']:
+                    pc.set_alpha(0)
+
+                # 2. Add "No data" text (now with correct y-limits)
+                ax.text(i, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
+                       fontsize=14, color='gray', style='italic',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', alpha=0.3))
+
+    else:
+        # Split violin logic
+        violin_width = 0.8 / len(splits)  # Divide space among splits
+
+        for i, group in enumerate(groups):
+            group_data_all = facet_data[facet_data['group'] == group]
+
+            for j, split in enumerate(splits):
+                # Get data for this group + split combination
+                split_data = group_data_all[group_data_all['split'] == split]['expression']
+
+                if len(split_data) > 0:
+                    # Calculate position for this split within the group
+                    x_offset = (j - (len(splits) - 1) / 2) * violin_width
+                    x_pos = i + x_offset
+
+                    # Create violin plot
+                    violin_parts = ax.violinplot([split_data], positions=[x_pos], widths=violin_width * 0.8,
+                                                showmeans=False, showextrema=False)
+
+                    # Apply split colors
+                    if split_colors and split in split_colors:
+                        split_color = split_colors[split]
+                    else:
+                        # Default colors if no custom split colors provided
+                        default_colors = ['purple', 'orange', 'green', 'red', 'blue']
+                        split_color = default_colors[j % len(default_colors)]
+
+                    for pc in violin_parts['bodies']:
+                        pc.set_facecolor(split_color)
+                        pc.set_alpha(0.7)
+                        pc.set_edgecolor('black')
+                        pc.set_linewidth(0.5)
+
+                    # Add jitter points
+                    if jitter_points:
+                        x_jitter = np.random.normal(x_pos, violin_width * 0.08, size=len(split_data))
+                        # Create darker version of violin color
+                        if isinstance(split_color, str):
+                            split_color_rgb = mcolors.to_rgb(split_color)
+                        else:
+                            split_color_rgb = split_color[:3]
+                        darker_color = tuple(c * 0.7 for c in split_color_rgb)
+                        ax.scatter(x_jitter, split_data,
+                                c=[darker_color], s=jitter_dot_size, alpha=0.8, edgecolors='none')
+
+                    # Add mean expression points if enabled
+                    if plot_mean:
+                        # Calculate true mean of all cells for this split
+                        split_mean = split_data.mean()
+
+                        if ax2 is not None:
+                            ax2.scatter(x_pos, split_mean, c=mean_color, s=mean_size, marker='o',
+                                    edgecolors='white', linewidth=1, zorder=10)
+
+                        # Add expressing-cells-only mean if enabled
+                        if plot_mean_pos_frac:
+                            if fraction_df is not None:
+                                # Use raw data for identifying expressing cells
+                                split_indices = group_data_all[group_data_all['split'] == split].index
+                                # Subset to indices that exist in the current facet
+                                available_indices = fraction_df.index.intersection(split_indices)
+                                if len(available_indices) > 0:
+                                    split_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
+                                    expressing_mask = split_fraction_data > fraction_threshold
+                                    if expressing_mask.sum() > 0:
+                                        # Get the corresponding expression data for expressing cells
+                                        expressing_indices = available_indices[expressing_mask]
+                                        facet_split_expressing_data = facet_data[facet_data.index.isin(expressing_indices)]['expression']
+                                        split_mean_pos_frac = facet_split_expressing_data.mean()
+                                    else:
+                                        split_mean_pos_frac = 0
+                                else:
+                                    split_mean_pos_frac = 0
+                            else:
+                                # Fallback: use expression data itself
+                                expressing_mask = split_data > expression_threshold
+                                if expressing_mask.sum() > 0:
+                                    split_mean_pos_frac = split_data[expressing_mask].mean()
+                                else:
+                                    split_mean_pos_frac = 0
+
+                            if ax2 is not None and split_mean_pos_frac > 0:
+                                ax2.scatter(x_pos, split_mean_pos_frac, c=mean_pos_frac_color, s=mean_pos_frac_size, marker='o',
+                                           edgecolors='white', linewidth=1, zorder=11)
+                else:
+                    # No data available for this group + split combination - create invisible placeholder + text
+                    x_offset = (j - (len(splits) - 1) / 2) * violin_width
+                    x_pos = i + x_offset
+
+                    # 1. Create invisible violin to establish coordinates
+                    placeholder_violin = ax.violinplot([0], positions=[x_pos], widths=violin_width * 0.8, showmeans=False, showextrema=False)
+                    # Make it completely invisible
+                    for pc in placeholder_violin['bodies']:
+                        pc.set_alpha(0)
+
+                    # 2. Add "No data" text (now with correct y-limits)
+                    ax.text(x_pos, ax.get_ylim()[1] * 0.5, 'No data', ha='center', va='center',
+                           fontsize=12, color='gray', style='italic',
+                           bbox=dict(boxstyle='round,pad=0.2', facecolor='lightgray', alpha=0.3))
+
+    # Add fraction numbers if requested
+    if show_fraction:
+        if split_by is None or splits is None:
+            # Regular fraction numbers for non-split violins
+            for i, group in enumerate(groups):
+                group_data = facet_data[facet_data['group'] == group]['expression']
+
+                if len(group_data) > 0:
+                    n_cells = len(group_data)
+                    if fraction_df is not None:
+                        # Use raw data for fraction calculation
+                        group_indices = facet_data[facet_data['group'] == group].index
+                        # Subset fraction_df to indices that exist in the current facet
+                        available_indices = fraction_df.index.intersection(group_indices)
+                        if len(available_indices) > 0:
+                            group_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
+                            n_expressing = (group_fraction_data > fraction_threshold).sum()
+                            frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                        else:
+                            # Fallback if no indices match
+                            n_expressing = (group_data > expression_threshold).sum()
+                            frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                    else:
+                        # Fallback: use expression data itself
                         n_expressing = (group_data > expression_threshold).sum()
                         frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
-                else:
-                    # Fallback: use expression data itself
-                    n_expressing = (group_data > expression_threshold).sum()
-                    frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
 
-                # Total cells - positioned just below x-axis
-                ax.text(i, -0.08, f'{n_cells}', ha='center', va='top',
-                        fontsize=number_fontsize, weight='bold',
-                        transform=ax.get_xaxis_transform())
-                # Expressing cells - middle row
-                ax.text(i, -0.12, f'{n_expressing}', ha='center', va='top',
-                        fontsize=number_fontsize-1,
-                        transform=ax.get_xaxis_transform())
-                # Fraction expressing - bottom row
-                ax.text(i, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
-                        ha='center', va='top', fontsize=number_fontsize-1,
-                        transform=ax.get_xaxis_transform())
-            else:
-                # Empty data indicators
-                ax.text(i, -0.08, '0', ha='center', va='top',
-                        fontsize=number_fontsize, weight='bold', color='gray',
-                        transform=ax.get_xaxis_transform())
-                ax.text(i, -0.12, '0', ha='center', va='top',
-                        fontsize=number_fontsize-1, color='gray',
-                        transform=ax.get_xaxis_transform())
-                ax.text(i, -0.16, '--', ha='center', va='top',
-                        fontsize=number_fontsize-1, color='gray',
-                        transform=ax.get_xaxis_transform())
+                    # Total cells - positioned just below x-axis
+                    ax.text(i, -0.08, f'{n_cells}', ha='center', va='top',
+                            fontsize=number_fontsize, weight='bold',
+                            transform=ax.get_xaxis_transform())
+                    # Expressing cells - middle row
+                    ax.text(i, -0.12, f'{n_expressing}', ha='center', va='top',
+                            fontsize=number_fontsize-1,
+                            transform=ax.get_xaxis_transform())
+                    # Fraction expressing - bottom row
+                    ax.text(i, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
+                            ha='center', va='top', fontsize=number_fontsize-1,
+                            transform=ax.get_xaxis_transform())
+                else:
+                    # Empty data indicators
+                    ax.text(i, -0.08, '0', ha='center', va='top',
+                            fontsize=number_fontsize, weight='bold', color='gray',
+                            transform=ax.get_xaxis_transform())
+                    ax.text(i, -0.12, '0', ha='center', va='top',
+                            fontsize=number_fontsize-1, color='gray',
+                            transform=ax.get_xaxis_transform())
+                    ax.text(i, -0.16, '--', ha='center', va='top',
+                            fontsize=number_fontsize-1, color='gray',
+                            transform=ax.get_xaxis_transform())
+        else:
+            # Split fraction numbers
+            violin_width = 0.8 / len(splits)  # Same as violin positioning
+
+            for i, group in enumerate(groups):
+                group_data_all = facet_data[facet_data['group'] == group]
+
+                for j, split in enumerate(splits):
+                    split_data = group_data_all[group_data_all['split'] == split]['expression']
+                    x_offset = (j - (len(splits) - 1) / 2) * violin_width
+                    x_pos = i + x_offset
+
+                    if len(split_data) > 0:
+                        n_cells = len(split_data)
+                        if fraction_df is not None:
+                            # Use raw data for fraction calculation
+                            split_indices = group_data_all[group_data_all['split'] == split].index
+                            # Subset fraction_df to indices that exist in the current facet
+                            available_indices = fraction_df.index.intersection(split_indices)
+                            if len(available_indices) > 0:
+                                split_fraction_data = fraction_df.loc[available_indices, 'fraction_expr']
+                                n_expressing = (split_fraction_data > fraction_threshold).sum()
+                                frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                            else:
+                                # Fallback if no indices match
+                                n_expressing = (split_data > expression_threshold).sum()
+                                frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+                        else:
+                            # Fallback: use expression data itself
+                            n_expressing = (split_data > expression_threshold).sum()
+                            frac_expressing = n_expressing / n_cells if n_cells > 0 else 0
+
+                        # Total cells - positioned just below x-axis
+                        ax.text(x_pos, -0.08, f'{n_cells}', ha='center', va='top',
+                                fontsize=number_fontsize, weight='bold',
+                                transform=ax.get_xaxis_transform())
+                        # Expressing cells - middle row
+                        ax.text(x_pos, -0.12, f'{n_expressing}', ha='center', va='top',
+                                fontsize=number_fontsize-1,
+                                transform=ax.get_xaxis_transform())
+                        # Fraction expressing - bottom row
+                        ax.text(x_pos, -0.16, f'{frac_expressing:.{number_decimal_places}f}',
+                                ha='center', va='top', fontsize=number_fontsize-1,
+                                transform=ax.get_xaxis_transform())
+                    else:
+                        # Empty data indicators for split
+                        ax.text(x_pos, -0.08, '0', ha='center', va='top',
+                                fontsize=number_fontsize, weight='bold', color='gray',
+                                transform=ax.get_xaxis_transform())
+                        ax.text(x_pos, -0.12, '0', ha='center', va='top',
+                                fontsize=number_fontsize-1, color='gray',
+                                transform=ax.get_xaxis_transform())
+                        ax.text(x_pos, -0.16, '--', ha='center', va='top',
+                                fontsize=number_fontsize-1, color='gray',
+                                transform=ax.get_xaxis_transform())
 
     # Set basic formatting
     ax.set_xticks(range(len(groups)))
@@ -1977,6 +2144,15 @@ def vlnplot_scvi(adata, gene, group_by,
 
         fig, axes = plt.subplots(n_rows, n_cols, figsize=final_figsize, squeeze=False)
 
+        # Handle split colors for faceted plots
+        if split_by is not None and splits is not None and len(splits) > 0:
+            # Get split colors using the same logic as single plots
+            split_colors_dict = _get_colors_from_dict(split_colors, splits,
+                                                     sns.color_palette("Set3", len(splits)),
+                                                     "Split colors") if isinstance(split_colors, dict) else split_colors
+        else:
+            split_colors_dict = split_colors
+
         # Plot each facet
         for idx, facet_cat in enumerate(facet_categories):
             row = idx // n_cols
@@ -1996,7 +2172,7 @@ def vlnplot_scvi(adata, gene, group_by,
 
             # Reuse the existing single plot logic for this subplot
             _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
-                              split_by, jitter_points, jitter_dot_size, plot_mean,
+                              split_by, split_colors_dict, splits, jitter_points, jitter_dot_size, plot_mean,
                               mean_color, mean_size, fraction_df, fraction_threshold,
                               show_fraction, number_fontsize, number_decimal_places,
                               expression_threshold, show_xlabel, xlabel_rotation,
