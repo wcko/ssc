@@ -1725,6 +1725,22 @@ def vlnplot_scvi(adata, gene, group_by,
     expression_threshold : float, default 0.1
         Threshold for determining expressing cells when using scVI data directly
 
+    Ordering and Layout Parameters
+    ------------------------------
+    group_order : list, optional
+        Custom order for group_by categories. If None, uses alphabetical order.
+        Example: ['Control', 'Treatment', 'Recovery']
+    split_order : list, optional
+        Custom order for split_by categories. If None, uses alphabetical order.
+        Example: ['pre', 'dupi', 'post']
+    facet_order : list, optional
+        Custom order for facet_by categories. If None, uses alphabetical order.
+        Example: ['BB07', 'BB10', 'BB11', 'BB12']
+    facet_ncols : int, optional
+        Number of columns for facet grid layout. If None, uses horizontal layout.
+        Arranges facets in n_cols × n_rows grid. Example: 4 subjects with
+        facet_ncols=2 creates 2×2 grid.
+
     Statistical Analysis Parameters
     ------------------------------
     scvi_model : scvi model, optional
@@ -2006,7 +2022,17 @@ def vlnplot_scvi(adata, gene, group_by,
         plot_data['facet_by'] = adata.obs[facet_by].values
 
         # Get facet categories in order
-        facet_categories = sorted(plot_data['facet_by'].unique())
+        if facet_order is not None:
+            # Use custom order with validation
+            facet_categories = [cat for cat in facet_order if cat in plot_data['facet_by'].unique()]
+            # Add any missing categories not in custom order
+            missing_categories = [cat for cat in plot_data['facet_by'].unique() if cat not in facet_order]
+            facet_categories.extend(sorted(missing_categories))
+            if missing_categories:
+                print(f"⚠️  Facet order: Categories {missing_categories} not in facet_order, added at end")
+        else:
+            # Default alphabetical order
+            facet_categories = sorted(plot_data['facet_by'].unique())
         n_facets = len(facet_categories)
         print(f"📋 Facet categories: {facet_categories}")
 
