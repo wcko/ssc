@@ -475,6 +475,97 @@ def _process_statistical_effects(adata, gene, scvi_model, group_effects, split_e
     return gene_statistics
 
 
+def _validate_and_filter_comparisons(comparisons, adata, group_by, split_by=None):
+    """
+    Check which comparisons are valid given available data.
+    Return valid comparisons + warning messages for invalid ones.
+
+    Parameters
+    ----------
+    comparisons : list
+        List of comparison tuples like ('group', 'A', 'B') or ('split', 'GroupX', 'Split1', 'Split2')
+    adata : AnnData
+        Annotated data object
+    group_by : str
+        Column name for grouping
+    split_by : str, optional
+        Name of split column if split comparisons are used
+
+    Returns
+    -------
+    valid_comparisons : list
+        List of comparisons that have sufficient data
+    warnings : list
+        List of warning messages for skipped comparisons
+    """
+    if comparisons is None:
+        return [], []
+
+    valid_comparisons = []
+    warnings = []
+
+    available_groups = set(adata.obs[group_by].unique())
+    available_splits = set(adata.obs[split_by].unique()) if split_by and split_by in adata.obs.columns else None
+
+    for comp in comparisons:
+        if len(comp) == 3:
+            # Group comparison: ('group', 'A', 'B')
+            comp_type, cat1, cat2 = comp
+            if comp_type == 'group':
+                if cat1 in available_groups and cat2 in available_groups:
+                    valid_comparisons.append(comp)
+                else:
+                    missing = [c for c in [cat1, cat2] if c not in available_groups]
+                    warnings.append(f"⚠️  Skipping group comparison {cat1} vs {cat2}: missing groups {missing}")
+            else:
+                warnings.append(f"⚠️  Unknown comparison type: {comp_type}")
+
+        elif len(comp) == 4:
+            # Split comparison: ('split', 'GroupX', 'Split1', 'Split2')
+            comp_type, target_group, cat1, cat2 = comp
+            if comp_type == 'split':
+                # Check if target group exists
+                if target_group not in available_groups:
+                    warnings.append(f"⚠️  Skipping split comparison in {target_group}: group not found")
+                    continue
+
+                # Check if both splits exist within that group
+                group_mask = adata.obs[group_by] == target_group
+                group_data = adata.obs[group_mask]
+                if len(group_data) == 0:
+                    warnings.append(f"⚠️  Skipping split comparison in {target_group}: no cells found")
+                    continue
+
+                group_splits = set(group_data[split_by].unique()) if split_by in group_data.columns else set()
+
+                if cat1 in group_splits and cat2 in group_splits:
+                    # Check if both split categories have actual data
+                    cat1_mask = (adata.obs[group_by] == target_group) & (adata.obs[split_by] == cat1)
+                    cat2_mask = (adata.obs[group_by] == target_group) & (adata.obs[split_by] == cat2)
+
+                    cat1_count = cat1_mask.sum()
+                    cat2_count = cat2_mask.sum()
+
+                    if cat1_count > 0 and cat2_count > 0:
+                        valid_comparisons.append(comp)
+                    else:
+                        empty_cats = []
+                        if cat1_count == 0:
+                            empty_cats.append(cat1)
+                        if cat2_count == 0:
+                            empty_cats.append(cat2)
+                        warnings.append(f"⚠️  Skipping split comparison {cat1} vs {cat2} in {target_group}: no cells in {empty_cats}")
+                else:
+                    missing = [c for c in [cat1, cat2] if c not in group_splits]
+                    warnings.append(f"⚠️  Skipping split comparison {cat1} vs {cat2} in {target_group}: missing splits {missing}")
+            else:
+                warnings.append(f"⚠️  Unknown comparison type: {comp_type}")
+        else:
+            warnings.append(f"⚠️  Invalid comparison format: {comp}")
+
+    return valid_comparisons, warnings
+
+
 def _draw_empty_placeholder_clean(ax, x_pos, text="No data"):
     """Draw a clean text-only placeholder for missing data"""
     ax.text(x_pos, ax.get_ylim()[1] * 0.1, text, ha='center', va='center',
@@ -1544,7 +1635,19 @@ def vlnplot_scvi(adata, gene, group_by,
 
     # Process comparisons for statistical annotations
     if comparisons and scvi_model:
-        comparison_stats = _process_comparisons(adata, gene, scvi_model, comparisons, group_by, split_by)
+        # Validate comparisons before processing to avoid DE errors
+        valid_comparisons, comp_warnings = _validate_and_filter_comparisons(comparisons, adata, group_by, split_by)
+
+        # Print warnings about skipped comparisons
+        for warning in comp_warnings:
+            print(warning)
+
+        if len(valid_comparisons) > 0:
+            print(f"ℹ️  Processing {len(valid_comparisons)} valid comparisons out of {len(comparisons)} requested")
+            comparison_stats = _process_comparisons(adata, gene, scvi_model, valid_comparisons, group_by, split_by)
+        else:
+            print("ℹ️  No valid comparisons found - proceeding without statistical annotations")
+            comparison_stats = {}
     else:
         comparison_stats = {}
 
