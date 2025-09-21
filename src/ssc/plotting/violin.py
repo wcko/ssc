@@ -685,7 +685,6 @@ def vlnplot(adata, gene, group_by,
                     xlabel_rotation=45,
                     xlabel_ha='right',
                     figsize=(12, 8),
-                    facet_figsize=None,
                     facet_ncols=None,
                     mean_color='black',
                     free_y=True,
@@ -759,9 +758,7 @@ def vlnplot(adata, gene, group_by,
     xlabel_ha : str, default 'right'
         Horizontal alignment for x-axis group labels ('left', 'center', 'right')
     figsize : tuple, default (12, 8)
-        Figure size for single plots
-    facet_figsize : tuple, optional
-        Figure size for faceted plots. If None, calculated automatically
+        Figure size (used for both single and faceted plots)
     facet_ncols : int, optional
     Number of columns for facet_by grid layout. If None, uses horizontal layout (default).
     When specified, arranges facet_by categories in an n_cols × n_rows grid with padding
@@ -943,9 +940,7 @@ def vlnplot(adata, gene, group_by,
             n_cols = facet_cols
 
         # Better default figure size
-        if facet_figsize is not None:
-            figsize = facet_figsize
-        else:
+        if figsize is None:
             figsize = (4 * n_cols, 4 * n_rows)  # Adjust for new grid
 
         fig, ax_pairs = _create_faceted_plot_layout(n_rows, n_cols, figsize)
@@ -1378,7 +1373,10 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                       split_by, jitter_points, jitter_dot_size, plot_mean,
                       mean_color, mean_size, fraction_df, fraction_threshold,
                       show_fraction, number_fontsize, number_decimal_places,
-                      expression_threshold):
+                      expression_threshold, show_xlabel, xlabel_rotation,
+                      xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
+                      axis_tick_fontsize,
+                      gene, layer, is_leftmost_subplot, is_rightmost_subplot):
     """Helper function to plot a single facet or the main plot"""
 
     # Simple violin plotting (no splits for now)
@@ -1471,8 +1469,51 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
 
     # Set basic formatting
     ax.set_xticks(range(len(groups)))
-    ax.set_xticklabels(groups, rotation=45, ha='right')
-    ax.set_ylabel('Expression')
+
+    # Handle x-axis labels with dynamic positioning
+    if show_xlabel:
+        # Calculate label position based on whether fractions are shown
+        if show_fraction:
+            # Move labels further down to avoid overlap with fraction numbers
+            label_y_position = -0.25  # Below the fraction numbers
+        else:
+            # Standard position
+            label_y_position = -0.08
+
+        # Apply x-axis labels with custom formatting
+        for i, group in enumerate(groups):
+            ax.text(i, label_y_position, group,
+                   ha=xlabel_ha, va='top',
+                   fontsize=xlabel_fontsize,
+                   rotation=xlabel_rotation,
+                   transform=ax.get_xaxis_transform())
+
+        # Hide the default tick labels
+        ax.set_xticklabels([])
+    else:
+        # Hide x-axis labels completely
+        ax.set_xticklabels([])
+
+    # Set y-axis labels with custom formatting
+    if is_leftmost_subplot:
+        # Primary y-axis label (expression) - only on leftmost subplots
+        y_label = f'{gene} Expression'
+        if layer is not None:
+            y_label += f' ({layer})'
+        ax.set_ylabel(y_label, fontsize=ylabel_fontsize)
+
+    # Apply color and fontsize to all right y-axes
+    if ax2 is not None and plot_mean:
+        ax2.tick_params(axis='y', colors=mean_color, labelsize=axis_tick_fontsize)
+
+    if is_rightmost_subplot:
+        # Secondary y-axis label (mean expression) - only on rightmost subplots
+        if ax2 is not None and plot_mean:
+            ax2.set_ylabel('Mean Expression', fontsize=ylabel_mean_fontsize, color=mean_color)
+
+    # Apply axis tick font sizes to all subplots
+    ax.tick_params(axis='y', labelsize=axis_tick_fontsize)
+    ax.tick_params(axis='x', labelsize=axis_tick_fontsize)
 
 
 def vlnplot_scvi(adata, gene, group_by,
@@ -1522,7 +1563,6 @@ def vlnplot_scvi(adata, gene, group_by,
                     xlabel_rotation=45,
                     xlabel_ha='right',
                     figsize=(12, 8),
-                    facet_figsize=None,
                     facet_ncols=None,
                     mean_color='black',
                     mean_size=60,                     # Size for regular mean expression dots
@@ -1889,9 +1929,13 @@ def vlnplot_scvi(adata, gene, group_by,
             n_cols = n_facets  # Default: horizontal layout
             n_rows = 1
 
-        # Create faceted figure
-        facet_figsize = facet_figsize if facet_figsize is not None else (4 * n_cols, 4 * n_rows)
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=facet_figsize, squeeze=False)
+        # Create faceted figure - use figsize or auto-calculate
+        if figsize is not None:
+            final_figsize = figsize
+        else:
+            final_figsize = (4 * n_cols, 4 * n_rows)  # Auto-calculate based on grid
+
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=final_figsize, squeeze=False)
 
         # Plot each facet
         for idx, facet_cat in enumerate(facet_categories):
@@ -1906,12 +1950,19 @@ def vlnplot_scvi(adata, gene, group_by,
             # Set subplot title
             ax.set_title(f"{facet_cat}", fontsize=subtitle_fontsize)
 
+            # Determine subplot position for y-axis label placement
+            is_leftmost_subplot = (col == 0)
+            is_rightmost_subplot = (col == n_cols - 1)
+
             # Reuse the existing single plot logic for this subplot
             _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
                               split_by, jitter_points, jitter_dot_size, plot_mean,
                               mean_color, mean_size, fraction_df, fraction_threshold,
                               show_fraction, number_fontsize, number_decimal_places,
-                              expression_threshold)
+                              expression_threshold, show_xlabel, xlabel_rotation,
+                              xlabel_ha, xlabel_fontsize, ylabel_fontsize, ylabel_mean_fontsize,
+                              axis_tick_fontsize,
+                              gene, layer, is_leftmost_subplot, is_rightmost_subplot)
 
         # Hide empty subplots
         for idx in range(n_facets, n_rows * n_cols):
