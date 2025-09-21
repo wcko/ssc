@@ -1671,11 +1671,9 @@ def vlnplot_scvi(adata, gene, group_by,
                     group_labels=None,           # X-axis abbreviation dictionary
                     scvi_model=None,             # scVI model for differential expression
                     comparisons=None,            # Simple comparison tuples: [('group', 'A', 'B')]
-                    annotate_stats=None,         # Enable statistical annotations (auto if effects specified)
                     detailed_stats=False,        # Show detailed P(DE) labels vs clean stars
                     proba_de_thresholds=(0.6, 0.8, 0.95),  # Thresholds for *, **, ***
                     de_mode='change',            # scVI DE mode: 'change' or 'vanilla'
-                    de_delta=0.25,               # Effect size threshold for DE
                     title_fontsize=14,           # Main plot title
                     subtitle_fontsize=9,         # Individual subplot titles
                     ylabel_fontsize=10,          # Y-axis labels (left side)
@@ -1761,8 +1759,6 @@ def vlnplot_scvi(adata, gene, group_by,
         - Bayes factor: Evidence strength for differential expression
 
         Requires scvi_model parameter.
-    annotate_stats : bool, optional
-        Enable statistical annotations. Auto-enabled if any effects or split_stats provided.
     detailed_stats : bool or str, default False
         Control level of statistical detail in annotations:
         - False: Show only significance stars (*, **, ***)
@@ -1777,9 +1773,6 @@ def vlnplot_scvi(adata, gene, group_by,
     de_mode : str, default 'change'
         scVI differential expression mode: 'change' or 'vanilla'.
         'change' mode focuses on meaningful effect sizes and is generally recommended.
-    de_delta : float, default 0.25
-        Effect size threshold for differential expression
-
     Styling Parameters
     ------------------
     title : str, optional
@@ -1856,12 +1849,8 @@ def vlnplot_scvi(adata, gene, group_by,
         raise ValueError(f"Group column '{group_by}' not found in adata.obs")
 
     # Statistical framework setup
-    if annotate_stats is None:
-        # Auto-enable if comparisons are specified
-        annotate_stats = bool(comparisons)
-
-    if annotate_stats and not scvi_model:
-        raise ValueError("scvi_model is required when annotate_stats=True or when comparisons are specified")
+    if comparisons and not scvi_model:
+        raise ValueError("scvi_model is required when comparisons are specified")
 
 
     # Process comparisons for statistical annotations
