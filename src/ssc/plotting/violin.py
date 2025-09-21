@@ -395,85 +395,6 @@ def _add_statistical_annotation(ax, x1, x2, y_position, gene_stats, detailed_sta
             fontsize=14, fontweight='bold')
 
 
-def _process_statistical_effects(adata, gene, scvi_model, group_effects, split_effects,
-                                group_by, split_by, de_mode, de_delta, groups, splits):
-    """Process and compute statistical effects using the working approach from script 07b."""
-    if not scvi_model:
-        return {}
-
-    gene_statistics = {}
-
-    # Process group effects using working approach (subset data + change mode)
-    if group_effects:
-        print(f"🔄 Processing group effects using working approach...")
-        try:
-            # Use the entire dataset for group comparisons (working approach)
-            de_results_1vs_all = _get_or_compute_de_working(
-                scvi_model, adata,
-                groupby=group_by,
-                subset_data=adata,  # Use full data for group comparisons
-                mode='change'       # Use change mode (working approach)
-            )
-
-            # Extract pairwise comparisons from 1-vs-all results
-            for comparison in group_effects:
-                if isinstance(comparison, tuple) and len(comparison) == 2:
-                    group1, group2 = comparison
-                    try:
-                        pairwise_stats = _extract_pairwise_comparison(
-                            de_results_1vs_all, gene, group1, group2
-                        )
-                        if pairwise_stats is not None:
-                            gene_statistics[f"group_{group1}_vs_{group2}"] = pairwise_stats
-                            print(f"   ✅ {group1} vs {group2}: proba_de={pairwise_stats['proba_de']:.3f}")
-                        else:
-                            print(f"   ⚠️ {group1} vs {group2}: No data for {gene}")
-                    except Exception as e:
-                        print(f"   ❌ {group1} vs {group2}: {str(e)}")
-
-        except Exception as e:
-            print(f"❌ Failed to compute group effects: {str(e)}")
-
-    # Process split effects using working approach
-    if split_effects and split_by:
-        print(f"🔄 Processing split effects using working approach...")
-        for comparison in split_effects:
-            if isinstance(comparison, tuple) and len(comparison) == 2:
-                split1, split2 = comparison
-                try:
-                    # Create subset containing only the split conditions (working approach)
-                    split_mask = adata.obs[split_by].isin([split1, split2])
-                    adata_split_subset = adata[split_mask].copy()
-
-                    if adata_split_subset.n_obs < 10:
-                        print(f"   ⚠️ {split1} vs {split2}: Too few cells ({adata_split_subset.n_obs})")
-                        continue
-
-                    # Use working approach: subset data + change mode + groupby
-                    de_results_split = _get_or_compute_de_working(
-                        scvi_model, adata,
-                        groupby=split_by,
-                        group1=split1,
-                        group2=split2,
-                        subset_data=adata_split_subset,
-                        mode='change'
-                    )
-
-                    # Extract pairwise comparison
-                    pairwise_stats = _extract_pairwise_comparison(
-                        de_results_split, gene, split1, split2
-                    )
-                    if pairwise_stats is not None:
-                        gene_statistics[f"split_{split1}_vs_{split2}"] = pairwise_stats
-                        print(f"   ✅ {split1} vs {split2}: proba_de={pairwise_stats['proba_de']:.3f}")
-                    else:
-                        print(f"   ⚠️ {split1} vs {split2}: No data for {gene}")
-
-                except Exception as e:
-                    print(f"   ❌ {split1} vs {split2}: {str(e)}")
-
-    return gene_statistics
-
 
 def _validate_and_filter_comparisons(comparisons, adata, group_by, split_by=None):
     """
@@ -1749,9 +1670,6 @@ def vlnplot_scvi(adata, gene, group_by,
                     show_xlabel=True,            # Control x-axis label visibility
                     group_labels=None,           # X-axis abbreviation dictionary
                     scvi_model=None,             # scVI model for differential expression
-                    group_effects=None,          # List of group comparisons for DE
-                    split_effects=None,          # List of split comparisons for DE
-                    split_stats=None,            # Pre-computed split_by DE statistics - dict with group_by keys, each containing {'proba_de', 'lfc_mean'}
                     comparisons=None,            # Simple comparison tuples: [('group', 'A', 'B')]
                     annotate_stats=None,         # Enable statistical annotations (auto if effects specified)
                     detailed_stats=False,        # Show detailed P(DE) labels vs clean stars
@@ -1808,16 +1726,6 @@ def vlnplot_scvi(adata, gene, group_by,
     ------------------------------
     scvi_model : scvi model, optional
         Trained scVI model for differential expression analysis
-    group_effects : list of tuples, optional
-        Group comparisons for differential expression, e.g. [('condition1', 'condition2')]
-        Compares between categories of group_by variable
-    split_effects : list of tuples, optional
-        Split comparisons for differential expression, e.g. [('treatment1', 'treatment2')]
-        Compares between categories of split_by variable within each group
-    split_stats : dict, optional
-        Pre-computed split_by DE statistics. Dict with group_by categories as keys,
-        each containing {'proba_de': float, 'lfc_mean': float}.
-        Use compute_split_effects_within_groups() to generate this.
     comparisons : list of tuples, optional
         Statistical comparisons to perform using scVI differential expression.
         Supports two comparison types:
@@ -1917,43 +1825,26 @@ def vlnplot_scvi(adata, gene, group_by,
     --------
     Pattern A: Split effects within groups (e.g., treatment effects within conditions)
 
-    >>> # Pre-compute treatment effects within each condition
-    >>> treatment_by_condition = ssc.compute_split_effects_within_groups(
-    ...     adata, 'GNLY', 'condition', 'treatment', ['dupi', 'pre'], scvi_model
-    ... )
-    >>> # Plot with statistical annotations
+    >>> # Statistical comparisons using the modern comparisons interface
     >>> ssc.vlnplot_scvi(
     ...     adata, 'GNLY', group_by='condition', split_by='treatment',
-    ...     split_effects=[('dupi', 'pre')], split_stats=treatment_by_condition,
-    ...     detailed_stats=True
-    ... )
-
-    Pattern B1: Pure group comparisons (subset first)
-
-    >>> # Compare conditions within dupilumab-treated cells only
-    >>> adata_dupi = adata[adata.obs['treatment'] == 'dupi'].copy()
-    >>> ssc.vlnplot_scvi(
-    ...     adata_dupi, 'GNLY', group_by='condition',
-    ...     scvi_model=scvi_model, group_effects=[('Nonlesional', 'SADBE')]
-    ... )
-
-    Pattern B3: Custom cross-group-treatment comparisons
-
-    >>> # Create combined grouping for flexible comparisons
-    >>> adata.obs['condition_treatment'] = adata.obs['condition'] + '_' + adata.obs['treatment']
-    >>> ssc.vlnplot_scvi(
-    ...     adata, 'GNLY', group_by='condition_treatment',
     ...     scvi_model=scvi_model,
-    ...     group_effects=[('Nonlesional_dupi', 'SADBE_dupi'),  # Treatment responses
-    ...                    ('Nonlesional_pre', 'SADBE_pre')]    # Baseline differences
+    ...     comparisons=[
+    ...         ('group', 'Nonlesional', 'SADBE'),
+    ...         ('group', 'SADBE', 'Metal'),
+    ...         ('split', 'Nonlesional', 'dupi', 'pre'),
+    ...         ('split', 'SADBE', 'dupi', 'pre')
+    ...     ],
+    ...     detailed_stats='full',
+    ...     proba_de_thresholds=(0.4, 0.6, 0.8)
     ... )
 
     Notes
     -----
-    - For best performance, pre-compute split statistics using compute_split_effects_within_groups()
-    - Statistical comparisons require scvi_model unless pre-computed split_stats provided
-    - Use detailed_stats=True to see P-values and log fold changes on plot
+    - Statistical comparisons require scvi_model parameter
+    - Use detailed_stats='full' to see P-values and log fold changes on plot
     - Function automatically handles scVI's 1-vs-all DE results and converts to pairwise comparisons
+    - Supports both group comparisons and split comparisons within groups
     """
 
     import warnings
@@ -1966,20 +1857,12 @@ def vlnplot_scvi(adata, gene, group_by,
 
     # Statistical framework setup
     if annotate_stats is None:
-        # Auto-enable if any effects are specified or split stats provided
-        annotate_stats = bool(group_effects or split_effects or split_stats or comparisons)
+        # Auto-enable if comparisons are specified
+        annotate_stats = bool(comparisons)
 
-    if annotate_stats and not scvi_model and not split_stats:
-        raise ValueError("scvi_model is required when annotate_stats=True or when group_effects/split_effects/comparisons are specified (unless split_stats is provided)")
+    if annotate_stats and not scvi_model:
+        raise ValueError("scvi_model is required when annotate_stats=True or when comparisons are specified")
 
-    # Validate statistical effects
-    if group_effects and not isinstance(group_effects, list):
-        raise ValueError("group_effects must be a list of tuples, e.g. [('group1', 'group2')]")
-    if split_effects and not isinstance(split_effects, list):
-        raise ValueError("split_effects must be a list of tuples, e.g. [('condition1', 'condition2')]")
-
-    if split_effects and not split_by:
-        raise ValueError("split_by must be specified when using split_effects")
 
     # Process comparisons for statistical annotations
     if comparisons and scvi_model:
@@ -2078,15 +1961,6 @@ def vlnplot_scvi(adata, gene, group_by,
     else:
         splits = [None]
 
-    # Compute statistical effects if requested
-    gene_statistics = {}
-    if annotate_stats:
-        print(f"📊 Computing statistical effects for {gene}...")
-        gene_statistics = _process_statistical_effects(
-            adata, gene, scvi_model, group_effects, split_effects,
-            group_by, split_by, de_mode, de_delta, groups, splits
-        )
-        print(f"📊 Computed {len(gene_statistics)} statistical comparisons")
 
     # Smart default legend behavior
     if show_legend is None:
@@ -2637,116 +2511,14 @@ def vlnplot_scvi(adata, gene, group_by,
     plot_title = title or f'{gene} Expression (scVI)'
     ax.set_title(plot_title, fontsize=title_fontsize)
 
-    # Add statistical annotations
-    if annotate_stats and gene_statistics:
-        print(f"📊 Adding statistical annotations...")
-        y_min, y_max = ax.get_ylim()
-
-        # Calculate annotation heights
-        annotation_height_start = y_max * 1.05
-        annotation_height_step = y_max * 0.08
-
-        annotation_count = 0
-
-        # Add group effect annotations
-        if group_effects:
-            for comparison in group_effects:
-                if isinstance(comparison, tuple) and len(comparison) == 2:
-                    group1, group2 = comparison
-                    stats_key = f"group_{group1}_vs_{group2}"
-
-                    if stats_key in gene_statistics:
-                        try:
-                            x1 = groups.index(group1)
-                            x2 = groups.index(group2)
-                            y_pos = annotation_height_start + annotation_count * annotation_height_step
-
-                            _add_statistical_annotation(
-                                ax, x1, x2, y_pos, gene_statistics[stats_key],
-                                detailed_stats, proba_de_thresholds, de_mode
-                            )
-                            annotation_count += 1
-                        except ValueError:
-                            print(f"⚠️ Groups {group1} or {group2} not found in plot")
-
-        # Add split effect annotations - group-specific approach using pre-computed stats
-        if split_effects and split_by and splits and len(splits) == 2 and split_stats:
-            split1, split2 = splits[0], splits[1]
-
-            print(f"📊 Adding group-specific split annotations: {split1} vs {split2}")
-
-            # Add split comparison annotations for each group individually
-            for i, group in enumerate(groups):
-                if group in split_stats:
-                    # Extract pre-computed statistics for this specific group
-                    group_stats = split_stats[group]
-                    proba_de = group_stats.get('proba_de', 0)
-                    lfc = group_stats.get('lfc_mean', 0)
-
-                    # Convert Series to scalar if needed
-                    if hasattr(proba_de, 'item'):
-                        proba_de = proba_de.item()
-                    if hasattr(lfc, 'item'):
-                        lfc = lfc.item()
-
-                    # Determine significance level for this group
-                    if proba_de >= proba_de_thresholds[2]:  # 95%
-                        stars = "***"
-                    elif proba_de >= proba_de_thresholds[1]:  # 80%
-                        stars = "**"
-                    elif proba_de >= proba_de_thresholds[0]:  # 60%
-                        stars = "*"
-                    else:
-                        stars = "ns"
-
-                    # Only add annotations if significant for this group
-                    if stars != "ns":
-                        print(f"   ✅ {group}: {split1} vs {split2} = {stars} (P={proba_de:.3f}, LFC={lfc:.2f})")
-
-                        # Calculate x positions for the two split categories within this group
-                        x1 = i - 0.2  # Position of first split category
-                        x2 = i + 0.2  # Position of second split category
-
-                        # Use a lower annotation height for split comparisons
-                        y_pos = y_max * 0.95
-
-                        # Add significance line
-                        ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
-                        ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
-                        ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
-
-                        # Add annotation text (stars or detailed stats)
-                        x_center = (x1 + x2) / 2
-                        if detailed_stats:
-                            annotation = f"{stars}\nP={proba_de:.2f}"
-                            if abs(lfc) >= 0.1:  # Only show LFC if meaningful
-                                annotation += f"\nLFC={lfc:.1f}"
-                        else:
-                            annotation = stars
-
-                        ax.text(x_center, y_pos + y_max*0.02, annotation, ha='center', va='bottom',
-                               fontsize=14, fontweight='bold')
-                    else:
-                        print(f"   ○ {group}: {split1} vs {split2} = ns (P={proba_de:.3f})")
-                else:
-                    print(f"   ⚠️ {group}: No split statistics provided")
-
-        # Adjust y-axis to accommodate original annotations
-        if annotation_count > 0:
-            new_y_max = annotation_height_start + annotation_count * annotation_height_step + y_max * 0.1
-            ax.set_ylim(0, new_y_max)
 
     # Add annotations for new comparison system
     if comparison_stats:
         print(f"📊 Adding comparison annotations...")
         y_min, y_max = ax.get_ylim()
 
-        # Calculate annotation heights starting after existing annotations
+        # Calculate annotation heights
         annotation_height_start = y_max * 1.05
-        if annotate_stats and gene_statistics:
-            # If we already have annotations, stack these higher
-            existing_annotations = len([c for c in (group_effects or []) if isinstance(c, tuple) and len(c) == 2])
-            annotation_height_start = y_max * (1.05 + existing_annotations * 0.08)
 
         annotation_height_step = y_max * 0.08
         comparison_annotation_count = 0
