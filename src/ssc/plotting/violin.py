@@ -351,7 +351,7 @@ def _get_star_annotation(significance, thresholds=(0.6, 0.8, 0.95)):
     elif significance >= thresholds[0]:
         return "*"
     else:
-        return ""
+        return "ns"
 
 
 def _add_statistical_annotation(ax, x1, x2, y_position, gene_stats, detailed_stats=False,
@@ -1151,49 +1151,49 @@ def _plot_single_facet(ax, ax2, facet_data, groups, group_colors_list,
             # Determine significance level
             significance = _get_star_annotation(proba_de, proba_de_thresholds)
 
-            if significance:  # Only annotate significant comparisons
-                # Parse comparison key to get groups
-                if comp_key.startswith('group_'):
-                    # Group comparison: extract group names
-                    parts = comp_key.replace('group_', '').split('_vs_')
-                    if len(parts) == 2:
-                        group1, group2 = parts
+            # Always annotate all comparisons (including ns)
+            # Parse comparison key to get groups
+            if comp_key.startswith('group_'):
+                # Group comparison: extract group names
+                parts = comp_key.replace('group_', '').split('_vs_')
+                if len(parts) == 2:
+                    group1, group2 = parts
 
-                        try:
-                            x1 = groups.index(group1)
-                            x2 = groups.index(group2)
-                            y_pos = annotation_height_start + comparison_annotation_count * annotation_height_step
+                    try:
+                        x1 = groups.index(group1)
+                        x2 = groups.index(group2)
+                        y_pos = annotation_height_start + comparison_annotation_count * annotation_height_step
 
-                            # Add significance line
-                            ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
-                            ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
-                            ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+                        # Add significance line
+                        ax.plot([x1, x2], [y_pos, y_pos], 'k-', linewidth=1)
+                        ax.plot([x1, x1], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
+                        ax.plot([x2, x2], [y_pos - y_max*0.01, y_pos + y_max*0.01], 'k-', linewidth=1)
 
-                            # Create annotation text based on detailed_stats setting
-                            x_center = (x1 + x2) / 2
+                        # Create annotation text based on detailed_stats setting
+                        x_center = (x1 + x2) / 2
 
-                            if detailed_stats == "full":
-                                annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}\nBF={bayes_factor:.1f}"
-                            elif detailed_stats == "medium":
+                        if detailed_stats == "full":
+                            annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}\nBF={bayes_factor:.1f}"
+                        elif detailed_stats == "medium":
+                            annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
+                        elif detailed_stats == "minimal":
+                            annotation = f"{significance}\nP(DE)={proba_de:.2f}"
+                        elif detailed_stats is True:  # Legacy support
+                            if abs(lfc) >= 0.1:
                                 annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
-                            elif detailed_stats == "minimal":
-                                annotation = f"{significance}\nP(DE)={proba_de:.2f}"
-                            elif detailed_stats is True:  # Legacy support
-                                if abs(lfc) >= 0.1:
-                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}\nLFC={lfc:.2f}"
-                                else:
-                                    annotation = f"{significance}\nP(DE)={proba_de:.2f}"
                             else:
-                                annotation = significance
+                                annotation = f"{significance}\nP(DE)={proba_de:.2f}"
+                        else:
+                            annotation = significance
 
-                            ax.text(x_center, y_pos + y_max*0.03, annotation, ha='center', va='bottom',
-                                   fontsize=10, fontweight='bold')
-                            comparison_annotation_count += 1
-                        except ValueError:
-                            # Groups not found in this facet - skip annotation
-                            pass
+                        ax.text(x_center, y_pos + y_max*0.03, annotation, ha='center', va='bottom',
+                               fontsize=10, fontweight='bold')
+                        comparison_annotation_count += 1
+                    except ValueError:
+                        # Groups not found in this facet - skip annotation
+                        pass
 
-                elif comp_key.startswith('split_'):
+            elif comp_key.startswith('split_'):
                     # Split comparison: extract group and split names
                     # Format: split_<group>_<split1>_vs_<split2>
                     parts = comp_key.replace('split_', '').split('_vs_')
@@ -3179,8 +3179,8 @@ def vlnplot_scvi(adata, gene, group_by,
             else:
                 stars = "ns"
 
-            # Add annotations if significant OR if detailed_stats is enabled
-            if stars != "ns" or detailed_stats:
+            # Always add visual annotations for all comparisons (including ns)
+            if True:
                 print(f"   ✅ {comp_key}: {stars} (P={proba_de:.3f}, LFC={lfc:.2f})")
 
                 # Parse comparison key to get positions
@@ -3206,25 +3206,25 @@ def vlnplot_scvi(adata, gene, group_by,
                             if detailed_stats == "full":
                                 # Show everything: stars + Prob(DE) + LFC + BF
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}\nLFC={lfc:.1f}\nBF={bayes_factor:.1f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}\nBF={bayes_factor:.1f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}\nBF={bayes_factor:.1f}"
                             elif detailed_stats == "medium":
                                 # Show stars + Prob(DE) + LFC
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}\nLFC={lfc:.1f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}"
                             elif detailed_stats == "minimal":
                                 # Show stars + Prob(DE) only
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}"
                             elif detailed_stats:  # True or backward compatibility
                                 # Original behavior: stars + Prob(DE) + LFC (if >= 0.1)
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}"
                                 if abs(lfc) >= 0.1:
@@ -3267,25 +3267,25 @@ def vlnplot_scvi(adata, gene, group_by,
                             if detailed_stats == "full":
                                 # Show everything: stars + Prob(DE) + LFC + BF
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}\nLFC={lfc:.1f}\nBF={bayes_factor:.1f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}\nBF={bayes_factor:.1f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}\nBF={bayes_factor:.1f}"
                             elif detailed_stats == "medium":
                                 # Show stars + Prob(DE) + LFC
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}\nLFC={lfc:.1f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}\nLFC={lfc:.1f}"
                             elif detailed_stats == "minimal":
                                 # Show stars + Prob(DE) only
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}"
                             elif detailed_stats:  # True or backward compatibility
                                 # Original behavior: stars + Prob(DE) + LFC (if >= 0.1)
                                 if stars == "ns":
-                                    annotation = f"P(DE)={proba_de:.2f}"
+                                    annotation = f"ns\nP(DE)={proba_de:.2f}"
                                 else:
                                     annotation = f"{stars}\nP(DE)={proba_de:.2f}"
                                 if abs(lfc) >= 0.1:
@@ -3298,8 +3298,6 @@ def vlnplot_scvi(adata, gene, group_by,
                                    fontsize=14, fontweight='bold')
                         except ValueError:
                             print(f"   ⚠️ Group {within_group} not found in plot")
-            else:
-                print(f"   ○ {comp_key}: ns (P={proba_de:.3f})")
 
         # Adjust y-axis to accommodate annotations
         total_annotations = comparison_annotation_count
